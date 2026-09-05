@@ -507,15 +507,50 @@ function MatchSection({ data, loading, onAdd, onEdit, onOpen, onDelete, onStatus
   const cardProps = { data, onEdit, onOpen, onDelete, onStatus, isAdmin, canRecord };
   return <SectionCard eyebrow="Serie, cup og vennskapskamper" title="Kamper" count={`${completed} gjennomført · ${planned} planlagt`} actionLabel={isAdmin ? "Ny kamp" : undefined} onAction={isAdmin ? onAdd : undefined}>
     {loading ? <LoadingCards /> : data.matches.length === 0 ? <EmptyState icon={Trophy} title="Ingen kamper lagt inn" text="Legg inn kampene på forhånd og fyll ut hendelser underveis eller etterpå." /> : <Tabs value={matchType} onValueChange={(value) => setMatchType(value as MatchType)}>
-      <TabsList className="grid h-auto w-full grid-cols-3 rounded-2xl bg-slate-100 p-1"><TabsTrigger className="min-h-12 rounded-xl" value="league">Serie <span className="ml-1 text-xs opacity-70">{typeCounts.league}</span></TabsTrigger><TabsTrigger className="min-h-12 rounded-xl" value="cup">Cup <span className="ml-1 text-xs opacity-70">{typeCounts.cup}</span></TabsTrigger><TabsTrigger className="min-h-12 rounded-xl" value="friendly">Vennskap <span className="ml-1 text-xs opacity-70">{typeCounts.friendly}</span></TabsTrigger></TabsList>
-      <TabsContent value="league"><MatchGrid matches={matchesByType("league")} emptyText="Ingen seriekamper." {...cardProps} /></TabsContent>
-      <TabsContent value="cup"><CupMatchGroups matches={matchesByType("cup")} emptyText="Ingen cupkamper." {...cardProps} /></TabsContent>
-      <TabsContent value="friendly"><MatchGrid matches={matchesByType("friendly")} emptyText="Ingen vennskapskamper." {...cardProps} /></TabsContent>
+      <TabsList className="grid min-h-14 w-full grid-cols-3 rounded-2xl bg-slate-100 p-1"><TabsTrigger className="min-h-12 rounded-xl" value="league">Serie <span className="ml-1 text-xs opacity-70">{typeCounts.league}</span></TabsTrigger><TabsTrigger className="min-h-12 rounded-xl" value="cup">Cup <span className="ml-1 text-xs opacity-70">{typeCounts.cup}</span></TabsTrigger><TabsTrigger className="min-h-12 rounded-xl" value="friendly">Vennskap <span className="ml-1 text-xs opacity-70">{typeCounts.friendly}</span></TabsTrigger></TabsList>
+      <TabsContent className="mt-2" value="league"><MonthMatchTabs matches={matchesByType("league")} emptyText="Ingen seriekamper." {...cardProps} /></TabsContent>
+      <TabsContent className="mt-2" value="cup"><MonthMatchTabs matches={matchesByType("cup")} emptyText="Ingen cupkamper." groupCups {...cardProps} /></TabsContent>
+      <TabsContent className="mt-2" value="friendly"><MonthMatchTabs matches={matchesByType("friendly")} emptyText="Ingen vennskapskamper." {...cardProps} /></TabsContent>
     </Tabs>}
   </SectionCard>;
 }
 
 type MatchListActions = { data: SeasonData; onEdit: (match: Match) => void; onOpen: (id: number) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: "planned" | "cancelled") => Promise<boolean>; isAdmin: boolean; canRecord: boolean };
+
+function monthLabel(monthKey: string) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const label = new Intl.DateTimeFormat("nb-NO", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function preferredMonth(months: string[]) {
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  if (months.includes(currentMonth)) return currentMonth;
+  return months.find((month) => month > currentMonth) ?? months.at(-1) ?? "";
+}
+
+function MonthMatchTabs({ matches, emptyText, groupCups = false, ...actions }: { matches: Match[]; emptyText: string; groupCups?: boolean } & MatchListActions) {
+  const sortedMatches = [...matches].sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
+  const months = [...new Set(sortedMatches.map((match) => match.date.slice(0, 7)))];
+  const [selectedMonth, setSelectedMonth] = useState(() => preferredMonth(months));
+
+  useEffect(() => {
+    if (!months.includes(selectedMonth)) setSelectedMonth(preferredMonth(months));
+  }, [months.join("|"), selectedMonth]);
+
+  if (!matches.length) return <p className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">{emptyText}</p>;
+
+  return <Tabs value={selectedMonth} onValueChange={setSelectedMonth}>
+    <TabsList aria-label="Velg måned" className="flex min-h-12 w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-red-50 p-1">
+      {months.map((month) => <TabsTrigger className="min-h-10 min-w-fit shrink-0 rounded-xl px-4" key={month} value={month}>{monthLabel(month)} <span className="ml-1 text-xs opacity-70">{sortedMatches.filter((match) => match.date.startsWith(month)).length}</span></TabsTrigger>)}
+    </TabsList>
+    {months.map((month) => {
+      const monthMatches = sortedMatches.filter((match) => match.date.startsWith(month));
+      return <TabsContent className="mt-2" key={month} value={month}>{groupCups ? <CupMatchGroups matches={monthMatches} emptyText={emptyText} {...actions} /> : <MatchGrid matches={monthMatches} emptyText={emptyText} {...actions} />}</TabsContent>;
+    })}
+  </Tabs>;
+}
 
 function MatchGrid({ matches, emptyText, ...actions }: { matches: Match[]; emptyText: string } & MatchListActions) {
   if (!matches.length) return <p className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">{emptyText}</p>;
