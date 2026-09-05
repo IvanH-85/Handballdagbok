@@ -278,8 +278,8 @@ export function SeasonApp() {
   const effectiveRole = actualIsAdmin ? previewRole : data.currentUser?.role;
   const isAdmin = effectiveRole === "admin";
   const canRecord = isAdmin || effectiveRole === "match_registrar";
-  const visibleMatchEvents = effectiveRole === "parent" ? [] : data.matchEvents;
-  const visibleMatchSubstitutions = effectiveRole === "parent" ? [] : data.matchSubstitutions;
+  const visibleMatchEvents = data.matchEvents;
+  const visibleMatchSubstitutions = data.matchSubstitutions;
 
   return (
     <main className="min-h-screen pb-16">
@@ -323,7 +323,7 @@ export function SeasonApp() {
           </TabsContent>}
           <TabsContent value="matches">
             <MatchSection
-              data={effectiveRole === "parent" ? { ...data, matchEvents: [], matchSubstitutions: [] } : data}
+              data={data}
               loading={loading}
               onAdd={() => { setEditingMatch(null); setMatchFormOpen(true); }}
               onEdit={(match) => { setEditingMatch(match); setMatchFormOpen(true); }}
