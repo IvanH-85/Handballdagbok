@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "update:standings": "node scripts/update-series-standings.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
