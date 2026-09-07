@@ -54,7 +54,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import { trainingThemeOptions } from "@/lib/training-themes";
-import { applyAction, fetchSnapshot, refreshSession, signIn, signOut as supabaseSignOut, signUp, type AuthSessionPayload } from "@/lib/supabase-api";
+import { applyAction, clearAuthCallback, fetchSnapshot, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
 import { MatchWorkspace } from "./match-workspace";
 import { TrainingWorkspace, type Exercise, type TrainingExercise } from "./training-workspace";
 
@@ -417,9 +417,12 @@ function AuthLoading() {
 }
 
 function LoginScreen({ onAuthenticated }: { onAuthenticated: (session: AuthSessionPayload) => Promise<void> }) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  type LoginMode = "login" | "register" | "forgot" | "recovery";
+  const callback = useRef(readAuthCallback()).current;
+  const [mode, setMode] = useState<LoginMode>(callback?.type === "recovery" ? "recovery" : "login");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -430,6 +433,23 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: (session: AuthSessi
     setLoginError("");
     setMessage("");
     try {
+      if (mode === "forgot") {
+        if (!identifier.includes("@")) throw new Error("Skriv inn e-postadressen som er registrert på deg.");
+        await requestPasswordReset(identifier);
+        setMessage("Vi har sendt en lenke for å velge nytt passord. Sjekk også søppelpost.");
+        return;
+      }
+      if (mode === "recovery") {
+        if (!callback) throw new Error("Lenken for å endre passord er ugyldig eller utløpt.");
+        if (password !== confirmPassword) throw new Error("Passordene er ikke like.");
+        await updatePassword(callback.session.accessToken, password);
+        clearAuthCallback();
+        setMode("login");
+        setPassword("");
+        setConfirmPassword("");
+        setMessage("Passordet er endret. Du kan nå logge inn.");
+        return;
+      }
       const session = mode === "login" ? await signIn(identifier, password) : await signUp(identifier, password);
       if (session) {
         await onAuthenticated(session);
@@ -452,13 +472,14 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: (session: AuthSessi
         <div className="flex items-center gap-4"><img className="size-20 shrink-0 rounded-full bg-white object-cover shadow-lg ring-4 ring-white/20" src="./sthk-logo.jpg" alt="Stokmarknes Håndballklubb" width={80} height={80} /><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-red-100">Stokmarknes Håndballklubb</p><h1 className="mt-1 text-3xl font-black leading-tight">Sesongdagbok</h1><p className="mt-1 text-lg font-bold text-red-100">STHK 2015</p></div></div>
       </div>
       <form className="p-6" onSubmit={submit}>
-        <div><h2 className="text-2xl font-black">{mode === "login" ? "Logg inn" : "Opprett passord"}</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{mode === "login" ? "Bruk e-postadressen eller telefonnummeret som er registrert på deg." : "Dette virker bare når en administrator har lagt deg til i den godkjente brukerlisten."}</p></div>
+        <div><h2 className="text-2xl font-black">{mode === "login" ? "Logg inn" : mode === "register" ? "Opprett passord" : mode === "forgot" ? "Glemt passord" : "Velg nytt passord"}</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{mode === "login" ? "Bruk e-postadressen eller telefonnummeret som er registrert på deg." : mode === "register" ? "Dette virker bare når en administrator har lagt deg til i den godkjente brukerlisten." : mode === "forgot" ? "Skriv inn e-postadressen din, så sender vi en sikker lenke for å velge nytt passord." : "Skriv inn det nye passordet du vil bruke."}</p></div>
         {message && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-900">{message}</div>}
         {loginError && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-900">{loginError}</div>}
-        <Field label="E-post eller telefonnummer" htmlFor="login-identifier"><Input id="login-identifier" autoComplete="username" autoFocus inputMode="email" required value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="navn@eksempel.no eller 999 99 999" /></Field>
-        <Field label={mode === "login" ? "Passord" : "Velg passord"} htmlFor="login-password"><Input id="login-password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={8} required type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Minst 8 tegn" /></Field>
-        <Button className="mt-6 min-h-12 w-full text-base" disabled={submitting || !identifier.trim() || password.length < 8} type="submit">{submitting ? <RefreshCw className="animate-spin" /> : mode === "login" ? <LogIn /> : <KeyRound />}{submitting ? "Vent litt …" : mode === "login" ? "Logg inn" : "Opprett passord"}</Button>
-        <button type="button" className="mt-4 min-h-11 w-full rounded-xl text-sm font-bold text-primary hover:bg-red-50" onClick={() => { setMode((value) => value === "login" ? "register" : "login"); setLoginError(""); setMessage(""); setPassword(""); }}>{mode === "login" ? "Første gang? Opprett passord" : "Tilbake til innlogging"}</button>
+        {mode !== "recovery" && <Field label={mode === "forgot" ? "E-postadresse" : "E-post eller telefonnummer"} htmlFor="login-identifier"><Input id="login-identifier" autoComplete="username" autoFocus inputMode="email" required value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder={mode === "forgot" ? "navn@eksempel.no" : "navn@eksempel.no eller 999 99 999"} /></Field>}
+        {mode !== "forgot" && <Field label={mode === "login" ? "Passord" : mode === "recovery" ? "Nytt passord" : "Velg passord"} htmlFor="login-password"><Input id="login-password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={8} required type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Minst 8 tegn" /></Field>}
+        {mode === "recovery" && <Field label="Gjenta nytt passord" htmlFor="confirm-password"><Input id="confirm-password" autoComplete="new-password" minLength={8} required type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Skriv passordet én gang til" /></Field>}
+        <Button className="mt-6 min-h-12 w-full text-base" disabled={submitting || (mode !== "recovery" && !identifier.trim()) || (mode !== "forgot" && password.length < 8) || (mode === "recovery" && confirmPassword.length < 8)} type="submit">{submitting ? <RefreshCw className="animate-spin" /> : mode === "login" ? <LogIn /> : <KeyRound />}{submitting ? "Vent litt …" : mode === "login" ? "Logg inn" : mode === "register" ? "Opprett passord" : mode === "forgot" ? "Send lenke" : "Lagre nytt passord"}</Button>
+        {mode === "login" ? <><button type="button" className="mt-4 min-h-11 w-full rounded-xl text-sm font-bold text-primary hover:bg-red-50" onClick={() => { setMode("register"); setLoginError(""); setMessage(""); setPassword(""); }}>Første gang? Opprett passord</button><button type="button" className="min-h-11 w-full rounded-xl text-sm font-bold text-primary hover:bg-red-50" onClick={() => { setMode("forgot"); setLoginError(""); setMessage(""); setPassword(""); }}>Glemt passord?</button></> : <button type="button" className="mt-4 min-h-11 w-full rounded-xl text-sm font-bold text-primary hover:bg-red-50" onClick={() => { if (mode === "recovery") clearAuthCallback(); setMode("login"); setLoginError(""); setMessage(""); setPassword(""); setConfirmPassword(""); }}>Tilbake til innlogging</button>}
         <p className="mt-4 border-t pt-4 text-center text-xs leading-5 text-muted-foreground">Håndballdagboken har en egen innlogging og er helt adskilt fra treningsdagboken. Bare forhåndsgodkjente brukere får tilgang.</p>
       </form>
     </section>
