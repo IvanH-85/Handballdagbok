@@ -101,6 +101,10 @@ export async function fetchSnapshot<T>(accessToken: string): Promise<T> {
   return jsonRequest("/rest/v1/rpc/season_snapshot", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
 }
 
+export async function fetchUserLoginActivity<T>(accessToken: string): Promise<T> {
+  return jsonRequest("/rest/v1/rpc/user_login_activity", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
+}
+
 export async function applyAction(accessToken: string, payload: Record<string, unknown>) {
   return jsonRequest("/rest/v1/rpc/season_action", {
     method: "POST", body: JSON.stringify({ payload }),
