@@ -27,7 +27,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run update:standings
+      - name: Oppdater serietabell
+        run: npm run update:standings || test -f public/series-standings.json
       - run: npm run build
       - uses: actions/configure-pages@v5
         with:
