@@ -3,6 +3,12 @@ const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publ
 
 export type AuthSessionPayload = { accessToken: string; refreshToken: string; expiresIn: number };
 
+export type AuthCallbackPayload = { type: string; session: AuthSessionPayload };
+
+function appRedirectUrl() {
+  return new URL(import.meta.env.BASE_URL, window.location.origin).href;
+}
+
 function assertConfigured() {
   if (!supabaseUrl || !publishableKey) throw new Error("Supabase er ikke konfigurert for denne utgaven ennå.");
 }
@@ -46,10 +52,38 @@ export async function signIn(identifier: string, password: string) {
 }
 
 export async function signUp(identifier: string, password: string) {
-  const body = await jsonRequest("/auth/v1/signup", {
+  const body = await jsonRequest(`/auth/v1/signup?redirect_to=${encodeURIComponent(appRedirectUrl())}`, {
     method: "POST", body: JSON.stringify(credentials(identifier, password)),
   });
   return body.access_token ? toSession(body) : null;
+}
+
+export async function requestPasswordReset(email: string) {
+  await jsonRequest(`/auth/v1/recover?redirect_to=${encodeURIComponent(appRedirectUrl())}`, {
+    method: "POST", body: JSON.stringify({ email: email.trim().toLowerCase() }),
+  });
+}
+
+export async function updatePassword(accessToken: string, password: string) {
+  await jsonRequest("/auth/v1/user", {
+    method: "PUT", body: JSON.stringify({ password }),
+  }, accessToken);
+}
+
+export function readAuthCallback(): AuthCallbackPayload | null {
+  if (!window.location.hash) return null;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const accessToken = params.get("access_token") ?? "";
+  const refreshToken = params.get("refresh_token") ?? "";
+  if (!accessToken || !refreshToken) return null;
+  return {
+    type: params.get("type") ?? "",
+    session: { accessToken, refreshToken, expiresIn: Number(params.get("expires_in") ?? 3600) },
+  };
+}
+
+export function clearAuthCallback() {
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
 }
 
 export async function refreshSession(refreshToken: string) {
