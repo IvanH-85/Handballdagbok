@@ -54,7 +54,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import { trainingThemeOptions } from "@/lib/training-themes";
-import { applyAction, clearAuthCallback, fetchSnapshot, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
+import { applyAction, clearAuthCallback, fetchSnapshot, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
 import { MatchWorkspace } from "./match-workspace";
 import { TrainingWorkspace, type Exercise, type TrainingExercise } from "./training-workspace";
 
@@ -64,6 +64,7 @@ type MatchType = "league" | "cup" | "friendly";
 type MatchPhase = "pre_match" | "first_half" | "halftime" | "second_half" | "completed";
 type AppRole = "admin" | "parent" | "match_registrar";
 type AppUser = { id: number; name: string; email: string | null; phone: string; role: AppRole; active: number | boolean; accountUserId: string | null; createdAt: string };
+type UserLoginStat = { userId: number; loginCount: number; lastLoginAt: string | null };
 type CurrentUser = { id: number; name: string; email: string | null; role: AppRole };
 type Training = { id: number; date: string; startTime: string; durationMinutes: number; title: string; theme: string; plan: string; notes: string; status: Exclude<ActivityStatus, "live">; completedAt: string | null; createdAt: string };
 type Attendance = { trainingId: number; playerId: number };
@@ -76,10 +77,10 @@ type RosterEntry = { playerId: number; starter: boolean; goalkeeper: boolean; ca
 type EventType = "goal_open" | "goal_penalty" | "penalty_miss" | "yellow" | "two_min" | "red" | "save_open" | "save_penalty";
 type MatchRegistrar = { matchId: number; userId: number };
 type CloudStorageStatus = { provider: string; configured: boolean; mode: "prepared" };
-type SeasonData = { players: Player[]; trainings: Training[]; attendance: Attendance[]; exercises: Exercise[]; trainingExercises: TrainingExercise[]; matches: Match[]; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; appUsers: AppUser[]; matchRegistrars: MatchRegistrar[]; currentUser: CurrentUser | null; cloudStorage: CloudStorageStatus };
+type SeasonData = { players: Player[]; trainings: Training[]; attendance: Attendance[]; exercises: Exercise[]; trainingExercises: TrainingExercise[]; matches: Match[]; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; appUsers: AppUser[]; userLoginStats: UserLoginStat[]; matchRegistrars: MatchRegistrar[]; currentUser: CurrentUser | null; cloudStorage: CloudStorageStatus };
 type AuthSession = { accessToken: string; refreshToken: string; expiresAt: number };
 
-const emptyData: SeasonData = { players: [], trainings: [], attendance: [], exercises: [], trainingExercises: [], matches: [], matchPlayers: [], matchEvents: [], matchSubstitutions: [], appUsers: [], matchRegistrars: [], currentUser: null, cloudStorage: { provider: "Supabase", configured: false, mode: "prepared" } };
+const emptyData: SeasonData = { players: [], trainings: [], attendance: [], exercises: [], trainingExercises: [], matches: [], matchPlayers: [], matchEvents: [], matchSubstitutions: [], appUsers: [], userLoginStats: [], matchRegistrars: [], currentUser: null, cloudStorage: { provider: "Supabase", configured: false, mode: "prepared" } };
 const authStorageKey = "sthk-season-auth-v1";
 const eventInfo: Record<EventType, { short: string; label: string; className: string }> = {
   goal_open: { short: "Mål", label: "Mål åpent spill", className: "bg-emerald-600 text-white" },
@@ -122,7 +123,8 @@ function readStoredSession(): AuthSession | null {
 
 async function fetchSeasonData(accessToken: string): Promise<SeasonData> {
   const data = await fetchSnapshot<Partial<SeasonData>>(accessToken);
-  return { ...emptyData, ...data };
+  const userLoginStats = await fetchUserLoginActivity<UserLoginStat[]>(accessToken);
+  return { ...emptyData, ...data, userLoginStats };
 }
 
 export function SeasonApp() {
@@ -345,7 +347,7 @@ export function SeasonApp() {
             />
           </TabsContent>}
           {isAdmin && <TabsContent value="stats"><StatsSection data={data} /></TabsContent>}
-          {isAdmin && <TabsContent value="users"><UserSection users={data.appUsers} cloudStorage={data.cloudStorage} currentUserId={data.currentUser?.id ?? 0} onAdd={() => { setEditingUser(null); setUserFormOpen(true); }} onEdit={(user) => { setEditingUser(user); setUserFormOpen(true); }} onDelete={(id) => runAction({ action: "deleteUser", id }, "Brukeren er slettet.")} /></TabsContent>}
+          {isAdmin && <TabsContent value="users"><UserSection users={data.appUsers} loginStats={data.userLoginStats} cloudStorage={data.cloudStorage} currentUserId={data.currentUser?.id ?? 0} onAdd={() => { setEditingUser(null); setUserFormOpen(true); }} onEdit={(user) => { setEditingUser(user); setUserFormOpen(true); }} onDelete={(id) => runAction({ action: "deleteUser", id }, "Brukeren er slettet.")} /></TabsContent>}
         </Tabs>
       </div>
 
@@ -630,11 +632,11 @@ function TrainingFocusSummary({ trainings }: { trainings: Training[] }) {
   </section>;
 }
 
-function UserSection({ users, cloudStorage, currentUserId, onAdd, onEdit, onDelete }: { users: AppUser[]; cloudStorage: CloudStorageStatus; currentUserId: number; onAdd: () => void; onEdit: (user: AppUser) => void; onDelete: (id: number) => Promise<boolean> }) {
+function UserSection({ users, loginStats, cloudStorage, currentUserId, onAdd, onEdit, onDelete }: { users: AppUser[]; loginStats: UserLoginStat[]; cloudStorage: CloudStorageStatus; currentUserId: number; onAdd: () => void; onEdit: (user: AppUser) => void; onDelete: (id: number) => Promise<boolean> }) {
   return <SectionCard eyebrow="Tilgang og roller" title="Brukere" count={`${users.filter((user) => Boolean(user.active)).length} aktive`} actionLabel="Legg til bruker" onAction={onAdd}>
     <div className={`mb-4 rounded-2xl border p-4 text-sm ${cloudStorage.configured ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "border-slate-200 bg-slate-50 text-slate-700"}`}><div className="flex items-center justify-between gap-3"><div><p className="font-bold">Sikker innlogging med {cloudStorage.provider}</p><p className="mt-1 leading-6">{cloudStorage.configured ? "E-post, telefonnummer og passord håndteres av Supabase. Roller og tilgang kontrolleres mot denne brukerlisten." : "Innloggingen er ikke konfigurert ennå."}</p></div><Badge className={cloudStorage.configured ? "bg-emerald-100 text-emerald-800" : ""} variant={cloudStorage.configured ? "secondary" : "outline"}>{cloudStorage.configured ? "Aktiv" : "Ikke klar"}</Badge></div></div>
-    <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-bold">Forhåndsgodkjent innlogging</p><p className="mt-1 leading-6">Legg inn navn, e-post og/eller telefonnummer før brukeren får tilgang. Nye brukere velger «Første gang? Opprett passord» på innloggingssiden. De kan deretter logge inn med e-post eller registrert telefonnummer.</p></div>
-    <div className="grid gap-3 lg:grid-cols-2">{users.map((user) => <article key={user.id} className={`rounded-2xl border p-4 ${user.active ? "bg-white" : "bg-slate-50 opacity-70"}`}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-bold">{user.name}</h3><Badge variant={user.role === "admin" ? "default" : "secondary"}>{roleLabel(user.role)}</Badge>{user.id === currentUserId && <Badge variant="outline">Deg</Badge>}</div>{user.email && <p className="mt-2 break-all text-sm text-muted-foreground">{user.email}</p>}{user.phone && <p className={`${user.email ? "mt-1" : "mt-2"} text-sm text-muted-foreground`}>{user.phone}</p>}{!user.email && !user.phone && <p className="mt-2 text-sm text-red-700">Innloggingsinformasjon mangler</p>}</div><StatusBadge status={user.active ? "completed" : "cancelled"} label={user.active ? "Aktiv" : "Deaktivert"} /></div><div className="mt-4 flex gap-2"><Button size="sm" variant="outline" onClick={() => onEdit(user)}><Pencil /> Rediger</Button>{user.id !== currentUserId && <DeleteButton label="Slett bruker" description="Brukeren mister all tilgang og eventuelle kampoppdrag." onConfirm={() => void onDelete(user.id)} />}</div></article>)}</div>
+    <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-bold">Forhåndsgodkjent innlogging</p><p className="mt-1 leading-6">Legg inn navn, e-post og/eller telefonnummer før brukeren får tilgang. Nye brukere velger «Første gang? Opprett passord» på innloggingssiden. Innlogginger telles fra 7. september 2026.</p></div>
+    <div className="grid gap-3 lg:grid-cols-2">{users.map((user) => { const activity = loginStats.find((item) => item.userId === user.id); const hasAccount = Boolean(user.accountUserId); return <article key={user.id} className={`rounded-2xl border p-4 ${user.active ? "bg-white" : "bg-slate-50 opacity-70"}`}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-bold">{user.name}</h3><Badge variant={user.role === "admin" ? "default" : "secondary"}>{roleLabel(user.role)}</Badge>{user.id === currentUserId && <Badge variant="outline">Deg</Badge>}</div>{user.email && <p className="mt-2 break-all text-sm text-muted-foreground">{user.email}</p>}{user.phone && <p className={`${user.email ? "mt-1" : "mt-2"} text-sm text-muted-foreground`}>{user.phone}</p>}{!user.email && !user.phone && <p className="mt-2 text-sm text-red-700">Innloggingsinformasjon mangler</p>}<div className="mt-3 flex flex-wrap gap-2"><Badge className={hasAccount ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"} variant="secondary">{hasAccount ? "Konto opprettet" : "Konto ikke opprettet"}</Badge>{hasAccount && <Badge variant="outline">{Number(activity?.loginCount ?? 0)} innlogginger</Badge>}</div>{hasAccount && <p className="mt-2 text-xs text-muted-foreground">{activity?.lastLoginAt ? `Sist innlogget ${formatLoginDateTime(activity.lastLoginAt)}` : "Ingen innlogging registrert ennå"}</p>}</div><StatusBadge status={user.active ? "completed" : "cancelled"} label={user.active ? "Aktiv" : "Deaktivert"} /></div><div className="mt-4 flex gap-2"><Button size="sm" variant="outline" onClick={() => onEdit(user)}><Pencil /> Rediger</Button>{user.id !== currentUserId && <DeleteButton label="Slett bruker" description="Brukeren mister all tilgang og eventuelle kampoppdrag." onConfirm={() => void onDelete(user.id)} />}</div></article>; })}</div>
   </SectionCard>;
 }
 
@@ -793,6 +795,12 @@ function displayScore(match: Match) {
 function formatDate(value: string) {
   if (!value) return "Dato ikke satt";
   return new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${value}T12:00:00`));
+}
+
+function formatLoginDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "ukjent tidspunkt";
+  return new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 function normalizeMatchPositions(roster: MatchPlayer[]) {
