@@ -459,7 +459,8 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: (session: AuthSessi
       setMode("login");
       setPassword("");
     } catch (err) {
-      setLoginError(err instanceof Error ? err.message : "Kunne ikke logge inn.");
+      const errorMessage = err instanceof Error ? err.message : "Kunne ikke logge inn.";
+      setLoginError(errorMessage === "Invalid login credentials" ? "Feil e-postadresse, telefonnummer eller passord." : errorMessage);
     } finally {
       setSubmitting(false);
     }
