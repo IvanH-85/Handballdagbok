@@ -165,6 +165,10 @@ export function MatchWorkspace({
     const position = initialPositions.get(entry.playerId) ?? "bench";
     return { playerId: entry.playerId, starter: position !== "bench", goalkeeper: position === "goalkeeper", captain: Boolean(entry.captain), position };
   });
+  const rosterPlayers = useMemo(() => {
+    const rosterPlayerIds = new Set(roster.map((entry) => entry.playerId));
+    return players.filter((player) => rosterPlayerIds.has(player.id));
+  }, [players, roster]);
   const redPlayerIds = new Set(events.filter((event) => event.side === "ours" && event.type === "red" && event.playerId).map((event) => Number(event.playerId)));
   const registeredGoals = events.filter((event) => event.type === "goal_open" || event.type === "goal_penalty");
   const ourScore = registeredGoals.length > 0 ? registeredGoals.filter((event) => event.side === "ours").length : match.ourScore ?? 0;
@@ -255,15 +259,15 @@ export function MatchWorkspace({
             </AlertDialog>}
             {phase === "second_half" && <AlertDialog><AlertDialogTrigger asChild><Button className="border-white/30 text-white hover:bg-white/10 hover:text-white" variant="outline"><Flag /> Kamp ferdig</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Avslutt og lås kampen?</AlertDialogTitle><AlertDialogDescription>Kampklokken stoppes, og kampen tas med i statistikken. Administrator kan åpne den igjen senere.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Avbryt</AlertDialogCancel><AlertDialogAction onClick={() => void onComplete(clockSeconds, displayedPeriodSeconds)}>Kamp ferdig</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
           </div>}
-          {ourGoals.length > 0 && <div className="mt-4 border-t border-white/20 pt-3"><p className="text-center text-xs font-bold uppercase tracking-wider text-red-100">Siste mål</p><div className="mt-2 flex flex-wrap justify-center gap-1.5">{ourGoals.slice(0, 6).map((event) => { const player = players.find((item) => item.id === event.playerId); return <span key={event.id} className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-semibold">{player ? compactName(player.name) : "Spiller"} · {formatEventTime(event.period, event.periodSecond)}</span>; })}</div></div>}
+          {ourGoals.length > 0 && <div className="mt-4 border-t border-white/20 pt-3"><p className="text-center text-xs font-bold uppercase tracking-wider text-red-100">Siste mål</p><div className="mt-2 flex flex-wrap justify-center gap-1.5">{ourGoals.slice(0, 6).map((event) => { const player = players.find((item) => item.id === event.playerId); return <span key={event.id} className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-semibold">{player ? compactName(player.name, rosterPlayers) : "Spiller"} · {formatEventTime(event.period, event.periodSecond)}</span>; })}</div></div>}
         </section>
 
         {playerComingIn && <div className="flex items-center justify-between gap-3 rounded-2xl border-2 border-sky-500 bg-sky-50 p-3 text-sky-950">
-          <div><p className="font-bold">{comingInPlayer ? `${compactName(comingInPlayer.name)} skal inn` : "Spiller skal inn"}</p><p className="text-sm">Trykk på spilleren på banen som skal ut.</p></div>
+          <div><p className="font-bold">{comingInPlayer ? `${compactName(comingInPlayer.name, rosterPlayers)} skal inn` : "Spiller skal inn"}</p><p className="text-sm">Trykk på spilleren på banen som skal ut.</p></div>
           <Button variant="outline" onClick={() => setPlayerComingIn(null)}>Avbryt</Button>
         </div>}
         {playerGoingOut && <div className="flex items-center justify-between gap-3 rounded-2xl border-2 border-orange-500 bg-orange-50 p-3 text-orange-950">
-          <div><p className="font-bold">{goingOutPlayer ? `${compactName(goingOutPlayer.name)} har fått ${playerGoingOut.reason === "red" ? "rødt kort" : "2 minutter"}` : "Velg innbytter"}</p><p className="text-sm">J12 spiller videre med fullt lag. Trykk på spilleren på benken som skal inn nå.</p></div>
+          <div><p className="font-bold">{goingOutPlayer ? `${compactName(goingOutPlayer.name, rosterPlayers)} har fått ${playerGoingOut.reason === "red" ? "rødt kort" : "2 minutter"}` : "Velg innbytter"}</p><p className="text-sm">J12 spiller videre med fullt lag. Trykk på spilleren på benken som skal inn nå.</p></div>
           <Button variant="outline" onClick={() => setPlayerGoingOut(null)}>Avbryt</Button>
         </div>}
 
@@ -285,7 +289,7 @@ export function MatchWorkspace({
               const playerId = [...currentPositions.entries()].find(([, playerPosition]) => playerPosition === position)?.[0];
               const player = players.find((item) => item.id === playerId);
               if (!player) return <div key={position} style={{ left: positionLayout[position].left, top: positionLayout[position].top }} className="absolute w-[22%] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-dashed border-white/70 bg-white/20 px-1 py-2 text-center text-[10px] font-bold text-white/90 sm:text-xs">{positionLayout[position].label}</div>;
-              return <CourtPlayerButton key={position} player={player} position={position} seconds={playingSeconds.get(player.id) ?? 0} marks={disciplineMarks(events, player.id)} captain={Boolean(roster.find((entry) => entry.playerId === player.id)?.captain)} selectingOutgoing={Boolean(playerComingIn)} disabled={!canRecord || Boolean(playerGoingOut)} onClick={() => selectPlayer(player)} />;
+              return <CourtPlayerButton key={position} player={player} displayName={compactName(player.name, rosterPlayers)} position={position} seconds={playingSeconds.get(player.id) ?? 0} marks={disciplineMarks(events, player.id)} captain={Boolean(roster.find((entry) => entry.playerId === player.id)?.captain)} selectingOutgoing={Boolean(playerComingIn)} disabled={!canRecord || Boolean(playerGoingOut)} onClick={() => selectPlayer(player)} />;
             })}
           </div>
 
@@ -309,7 +313,7 @@ export function MatchWorkspace({
 
         <section className="grid gap-4 lg:grid-cols-2">
           <div><h3 className="font-bold">Hendelseslogg</h3>{events.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen hendelser registrert.</p> : <div className="mt-2 space-y-2">{events.map((event) => { const player = players.find((item) => item.id === event.playerId); const actor = event.side === "opponent" ? match.opponent : player?.name ?? "Ukjent spiller"; return <div key={event.id} className="flex min-h-12 items-center justify-between rounded-xl border px-3 py-2"><div className="flex min-w-0 items-center gap-2"><span className="w-20 shrink-0 text-xs font-bold text-muted-foreground">{formatEventTime(event.period, event.periodSecond)}</span><span className={`shrink-0 rounded-lg px-2 py-1 text-xs font-bold ${eventInfo[event.type].className}`}>{eventInfo[event.type].short}</span><span className="truncate text-sm font-medium">{actor}</span></div>{canRecord && <Button aria-label={`Angre ${eventInfo[event.type].label}`} size="icon-sm" variant="ghost" onClick={() => void onDeleteEvent(event.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
-          <div><h3 className="font-bold">Bytter</h3>{substitutions.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen bytter registrert.</p> : <div className="mt-2 space-y-2">{[...substitutions].reverse().map((substitution, index) => { const playerIn = players.find((item) => item.id === substitution.playerInId); const playerOut = players.find((item) => item.id === substitution.playerOutId); return <div key={substitution.id} className="flex min-h-12 items-center justify-between rounded-xl border px-3 py-2"><div className="min-w-0"><p className="truncate text-sm font-semibold"><span className="text-emerald-700">Inn: {playerIn ? compactName(playerIn.name) : "Ukjent"}</span> · <span className="text-primary">Ut: {playerOut ? compactName(playerOut.name) : "Ukjent"}</span></p><p className="text-xs text-muted-foreground">{formatEventTime(substitution.period, substitution.periodSecond)} · {positionLayout[substitution.position]?.label ?? "Posisjon"}</p></div>{canRecord && index === 0 && <Button aria-label="Angre siste bytte" size="icon-sm" variant="ghost" onClick={() => void onDeleteSubstitution(substitution.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
+          <div><h3 className="font-bold">Bytter</h3>{substitutions.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen bytter registrert.</p> : <div className="mt-2 space-y-2">{[...substitutions].reverse().map((substitution, index) => { const playerIn = players.find((item) => item.id === substitution.playerInId); const playerOut = players.find((item) => item.id === substitution.playerOutId); return <div key={substitution.id} className="flex min-h-12 items-center justify-between rounded-xl border px-3 py-2"><div className="min-w-0"><p className="truncate text-sm font-semibold"><span className="text-emerald-700">Inn: {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span> · <span className="text-primary">Ut: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"}</span></p><p className="text-xs text-muted-foreground">{formatEventTime(substitution.period, substitution.periodSecond)} · {positionLayout[substitution.position]?.label ?? "Posisjon"}</p></div>{canRecord && index === 0 && <Button aria-label="Angre siste bytte" size="icon-sm" variant="ghost" onClick={() => void onDeleteSubstitution(substitution.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
         </section>
       </div>
 
@@ -333,10 +337,10 @@ export function MatchWorkspace({
 
 type DisciplineMarks = { yellow: boolean; twoMinutes: number; red: boolean };
 
-function CourtPlayerButton({ player, position, seconds, marks, captain, selectingOutgoing, disabled, onClick }: { player: Player; position: CourtPosition; seconds: number; marks: DisciplineMarks; captain: boolean; selectingOutgoing: boolean; disabled: boolean; onClick: () => void }) {
+function CourtPlayerButton({ player, displayName, position, seconds, marks, captain, selectingOutgoing, disabled, onClick }: { player: Player; displayName: string; position: CourtPosition; seconds: number; marks: DisciplineMarks; captain: boolean; selectingOutgoing: boolean; disabled: boolean; onClick: () => void }) {
   const layout = positionLayout[position];
   return <button type="button" title={`${player.name} · ${layout.label}`} disabled={disabled} onClick={onClick} style={{ left: layout.left, top: layout.top }} className={`absolute z-10 w-[23%] max-w-36 -translate-x-1/2 -translate-y-1/2 rounded-xl border-2 px-1.5 py-1.5 text-center shadow-md transition sm:px-2 sm:py-2 ${selectingOutgoing ? "animate-pulse border-sky-700 bg-sky-50 text-sky-950" : "border-white bg-white text-slate-950 hover:scale-105"} disabled:opacity-60`}>
-    <span className="flex items-center justify-center gap-1 text-[11px] font-black leading-tight sm:text-sm">{captain && <CaptainMark />}<span className="truncate">{compactName(player.name)}</span></span>
+    <span className="flex items-center justify-center gap-1 text-[11px] font-black leading-tight sm:text-sm">{captain && <CaptainMark />}<span className="truncate">{displayName}</span></span>
     <span className="mt-0.5 block truncate text-[9px] text-muted-foreground sm:text-[11px]">{position === "goalkeeper" && <Shield className="mr-0.5 inline size-3" />}{formatPlayingTime(seconds)}</span>
     <span className="mt-1 flex min-h-4 items-center justify-center gap-1 text-[10px] font-bold text-slate-600 sm:text-xs">{player.jerseyNumber ? `#${player.jerseyNumber}` : ""}<PlayerMarks marks={marks} /></span>
   </button>;
@@ -394,8 +398,15 @@ function playerLabel(player: Player) {
   return `${player.jerseyNumber ? `#${player.jerseyNumber} · ` : ""}${player.name}`;
 }
 
-function compactName(name: string) {
-  return name.trim().split(/\s+/)[0] || name;
+function compactName(name: string, teammates: Player[]) {
+  const nameParts = name.trim().split(/\s+/).filter(Boolean);
+  const firstName = nameParts[0] || name;
+  const matchingFirstNames = teammates.filter((player) => {
+    const teammateFirstName = player.name.trim().split(/\s+/)[0] || player.name;
+    return teammateFirstName.localeCompare(firstName, "nb-NO", { sensitivity: "base" }) === 0;
+  });
+  if (matchingFirstNames.length < 2 || nameParts.length < 2) return firstName;
+  return `${firstName} ${nameParts[1].charAt(0).toLocaleUpperCase("nb-NO")}`;
 }
 
 function fixtureLabel(match: Match) {
