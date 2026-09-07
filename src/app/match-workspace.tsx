@@ -336,9 +336,9 @@ type DisciplineMarks = { yellow: boolean; twoMinutes: number; red: boolean };
 function CourtPlayerButton({ player, position, seconds, marks, captain, selectingOutgoing, disabled, onClick }: { player: Player; position: CourtPosition; seconds: number; marks: DisciplineMarks; captain: boolean; selectingOutgoing: boolean; disabled: boolean; onClick: () => void }) {
   const layout = positionLayout[position];
   return <button type="button" title={`${player.name} · ${layout.label}`} disabled={disabled} onClick={onClick} style={{ left: layout.left, top: layout.top }} className={`absolute z-10 w-[23%] max-w-36 -translate-x-1/2 -translate-y-1/2 rounded-xl border-2 px-1.5 py-1.5 text-center shadow-md transition sm:px-2 sm:py-2 ${selectingOutgoing ? "animate-pulse border-sky-700 bg-sky-50 text-sky-950" : "border-white bg-white text-slate-950 hover:scale-105"} disabled:opacity-60`}>
-    <span className="flex items-center justify-center gap-1 text-[11px] font-black leading-tight sm:text-sm">{captain && <CaptainMark />}<span className="truncate">{player.jerseyNumber ? `#${player.jerseyNumber} ` : ""}{compactName(player.name)}</span></span>
+    <span className="flex items-center justify-center gap-1 text-[11px] font-black leading-tight sm:text-sm">{captain && <CaptainMark />}<span className="truncate">{compactName(player.name)}</span></span>
     <span className="mt-0.5 block truncate text-[9px] text-muted-foreground sm:text-[11px]">{position === "goalkeeper" && <Shield className="mr-0.5 inline size-3" />}{formatPlayingTime(seconds)}</span>
-    <span className="mt-1 flex min-h-4 items-center justify-center"><PlayerMarks marks={marks} /></span>
+    <span className="mt-1 flex min-h-4 items-center justify-center gap-1 text-[10px] font-bold text-slate-600 sm:text-xs">{player.jerseyNumber ? `#${player.jerseyNumber}` : ""}<PlayerMarks marks={marks} /></span>
   </button>;
 }
 
