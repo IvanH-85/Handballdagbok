@@ -2,6 +2,8 @@ name: Deploy GitHub Pages
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
   push:
     branches: [main]
 
@@ -25,6 +27,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run update:standings
       - run: npm run build
       - uses: actions/configure-pages@v5
         with:
