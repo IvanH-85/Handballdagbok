@@ -6,7 +6,7 @@ export type AuthSessionPayload = { accessToken: string; refreshToken: string; ex
 export type AuthCallbackPayload = { type: string; session: AuthSessionPayload };
 
 function appRedirectUrl() {
-  return new URL(import.meta.env.BASE_URL, window.location.origin).href;
+  return new URL("./", window.location.href).href;
 }
 
 function assertConfigured() {
