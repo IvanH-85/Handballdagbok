@@ -204,7 +204,13 @@ export function SeasonApp() {
     let cancelled = false;
     const timer = window.setTimeout(() => {
       if (cancelled) return;
-      const stored = readStoredSession();
+      const authCallback = readAuthCallback();
+      const confirmedSession = authCallback && authCallback.type !== "recovery" ? toStoredSession(authCallback.session) : null;
+      const stored = confirmedSession ?? readStoredSession();
+      if (confirmedSession) {
+        window.localStorage.setItem(authStorageKey, JSON.stringify(confirmedSession));
+        clearAuthCallback();
+      }
       sessionRef.current = stored;
       setAuthSession(stored);
       setAuthReady(true);
