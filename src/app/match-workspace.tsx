@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Flag, Pause, Play, RotateCcw, Shield, TimerReset, Users } from "lucide-react";
+import { ArrowLeftRight, Flag, Pause, Play, RotateCcw, Shield, TimerReset, UserRoundCheck, Users } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +29,7 @@ type Match = {
   competition: string;
   matchType: "league" | "cup" | "friendly";
   cupName: string;
+  registrarName: string | null;
   ourScore: number | null;
   opponentScore: number | null;
   periodCount: number;
@@ -234,6 +235,10 @@ export function MatchWorkspace({
       <DialogHeader>
         <DialogTitle>{fixtureLabel(match)}</DialogTitle>
         <DialogDescription>{match.competition} · {formatDate(match.date)}{match.startTime ? ` kl. ${match.startTime}` : ""}</DialogDescription>
+        <div className="mt-1 flex w-fit items-center gap-2 rounded-full border bg-slate-50 px-3 py-1.5 text-sm text-slate-800">
+          <UserRoundCheck className="size-4 text-primary" />
+          <span><span className="font-semibold">Kampregistrator:</span> {match.registrarName || "Ingen valgt"}</span>
+        </div>
       </DialogHeader>
 
       <div className="space-y-4">
