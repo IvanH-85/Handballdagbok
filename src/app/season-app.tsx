@@ -55,9 +55,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import { trainingThemeOptions } from "@/lib/training-themes";
 import { fetchSeriesTable, type SeriesTableData } from "@/lib/series-standings";
-import { applyAction, clearAuthCallback, fetchSnapshot, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
+import { applyAction, clearAuthCallback, fetchSnapshot, fetchTrainingObservations, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
 import { MatchWorkspace } from "./match-workspace";
-import { TrainingWorkspace, type Exercise, type TrainingExercise } from "./training-workspace";
+import { TrainingWorkspace, type Exercise, type TrainingExercise, type TrainingObservation } from "./training-workspace";
 
 type Player = { id: number; name: string; jerseyNumber: number | null; shirtSize: string; shortsSize: string; active: number | boolean; createdAt: string };
 type ActivityStatus = "planned" | "live" | "completed" | "cancelled";
@@ -78,10 +78,10 @@ type RosterEntry = { playerId: number; starter: boolean; goalkeeper: boolean; ca
 type EventType = "goal_open" | "goal_penalty" | "penalty_miss" | "yellow" | "two_min" | "red" | "save_open" | "save_penalty";
 type MatchRegistrar = { matchId: number; userId: number };
 type CloudStorageStatus = { provider: string; configured: boolean; mode: "prepared" };
-type SeasonData = { players: Player[]; trainings: Training[]; attendance: Attendance[]; exercises: Exercise[]; trainingExercises: TrainingExercise[]; matches: Match[]; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; appUsers: AppUser[]; userLoginStats: UserLoginStat[]; matchRegistrars: MatchRegistrar[]; seriesTable: SeriesTableData | null; currentUser: CurrentUser | null; cloudStorage: CloudStorageStatus };
+type SeasonData = { players: Player[]; trainings: Training[]; attendance: Attendance[]; exercises: Exercise[]; trainingExercises: TrainingExercise[]; trainingObservations: TrainingObservation[]; matches: Match[]; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; appUsers: AppUser[]; userLoginStats: UserLoginStat[]; matchRegistrars: MatchRegistrar[]; seriesTable: SeriesTableData | null; currentUser: CurrentUser | null; cloudStorage: CloudStorageStatus };
 type AuthSession = { accessToken: string; refreshToken: string; expiresAt: number };
 
-const emptyData: SeasonData = { players: [], trainings: [], attendance: [], exercises: [], trainingExercises: [], matches: [], matchPlayers: [], matchEvents: [], matchSubstitutions: [], appUsers: [], userLoginStats: [], matchRegistrars: [], seriesTable: null, currentUser: null, cloudStorage: { provider: "Supabase", configured: false, mode: "prepared" } };
+const emptyData: SeasonData = { players: [], trainings: [], attendance: [], exercises: [], trainingExercises: [], trainingObservations: [], matches: [], matchPlayers: [], matchEvents: [], matchSubstitutions: [], appUsers: [], userLoginStats: [], matchRegistrars: [], seriesTable: null, currentUser: null, cloudStorage: { provider: "Supabase", configured: false, mode: "prepared" } };
 const authStorageKey = "sthk-season-auth-v1";
 const eventInfo: Record<EventType, { short: string; label: string; className: string }> = {
   goal_open: { short: "Mål", label: "Mål åpent spill", className: "bg-emerald-600 text-white" },
@@ -125,8 +125,9 @@ function readStoredSession(): AuthSession | null {
 async function fetchSeasonData(accessToken: string): Promise<SeasonData> {
   const data = await fetchSnapshot<Partial<SeasonData>>(accessToken);
   const userLoginStats = await fetchUserLoginActivity<UserLoginStat[]>(accessToken);
+  const trainingObservations = data.currentUser?.role === "admin" ? await fetchTrainingObservations<TrainingObservation[]>(accessToken) : [];
   const seriesTable = data.currentUser?.role === "admin" ? await fetchSeriesTable().catch(() => null) : null;
-  return { ...emptyData, ...data, userLoginStats, seriesTable };
+  return { ...emptyData, ...data, trainingObservations, userLoginStats, seriesTable };
 }
 
 export function SeasonApp() {

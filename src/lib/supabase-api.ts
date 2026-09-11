@@ -105,8 +105,13 @@ export async function fetchUserLoginActivity<T>(accessToken: string): Promise<T>
   return jsonRequest("/rest/v1/rpc/user_login_activity", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
 }
 
+export async function fetchTrainingObservations<T>(accessToken: string): Promise<T> {
+  return jsonRequest("/rest/v1/rpc/training_observations_snapshot", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
+}
+
 export async function applyAction(accessToken: string, payload: Record<string, unknown>) {
-  return jsonRequest("/rest/v1/rpc/season_action", {
+  const rpcName = payload.action === "saveTrainingObservation" ? "save_training_observation" : "season_action";
+  return jsonRequest(`/rest/v1/rpc/${rpcName}`, {
     method: "POST", body: JSON.stringify({ payload }),
   }, accessToken);
 }

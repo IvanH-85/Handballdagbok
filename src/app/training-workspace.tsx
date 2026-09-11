@@ -11,6 +11,8 @@ import {
   ExternalLink,
   Flame,
   Goal,
+  MessageCircle,
+  Minus,
   Pencil,
   Plus,
   Search,
@@ -52,6 +54,7 @@ export type Training = { id: number; date: string; startTime: string; durationMi
 export type Attendance = { trainingId: number; playerId: number };
 export type Exercise = { id: number; seedKey: string | null; title: string; category: ExerciseCategory; description: string; durationMinutes: number; equipment: string; sourceTitle: string; sourceUrl: string };
 export type TrainingExercise = { id: number; trainingId: number; exerciseId: number; section: TrainingSectionKey; sortOrder: number; durationMinutes: number; notes: string };
+export type TrainingObservation = { trainingId: number; playerId: number; positiveCount: number; needsFollowUp: boolean; note: string; spokenTo: boolean; updatedAt: string };
 
 type TrainingData = {
   players: Player[];
@@ -59,6 +62,7 @@ type TrainingData = {
   attendance: Attendance[];
   exercises: Exercise[];
   trainingExercises: TrainingExercise[];
+  trainingObservations: TrainingObservation[];
 };
 
 type RunAction = (payload: Record<string, unknown>, successMessage: string) => Promise<boolean>;
@@ -87,6 +91,7 @@ export function TrainingWorkspace({ data, loading, saving, runAction }: { data: 
   const [editingTraining, setEditingTraining] = useState<Training | null>(null);
   const [exerciseOpen, setExerciseOpen] = useState(false);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
+  const [focusTraining, setFocusTraining] = useState<Training | null>(null);
   const completedCount = data.trainings.filter((training) => training.status === "completed").length;
   const plannedCount = data.trainings.filter((training) => training.status === "planned").length;
 
@@ -127,7 +132,7 @@ export function TrainingWorkspace({ data, loading, saving, runAction }: { data: 
           <TabsTrigger value="library" className="rounded-lg">Øvelsesbank · {data.exercises.length}</TabsTrigger>
         </TabsList>
         <TabsContent value="plans">
-          <TrainingPlans data={data} loading={loading} onAdd={newTraining} onEdit={editTraining} onDelete={(id) => runAction({ action: "deleteTraining", id }, "Treningen er slettet.")} onStatus={(id, status) => runAction({ action: "setTrainingStatus", id, status }, status === "completed" ? "Treningen er markert som gjennomført og låst." : status === "cancelled" ? "Treningen er markert som avlyst." : "Treningen er åpnet igjen.")} />
+          <TrainingPlans data={data} loading={loading} onAdd={newTraining} onEdit={editTraining} onFocus={setFocusTraining} onDelete={(id) => runAction({ action: "deleteTraining", id }, "Treningen er slettet.")} onStatus={(id, status) => runAction({ action: "setTrainingStatus", id, status }, status === "completed" ? "Treningen er markert som gjennomført og låst." : status === "cancelled" ? "Treningen er markert som avlyst." : "Treningen er åpnet igjen.")} />
         </TabsContent>
         <TabsContent value="library">
           <ExerciseLibrary exercises={data.exercises} loading={loading} onAdd={newExercise} onEdit={editExercise} onDelete={(id) => runAction({ action: "deleteExercise", id }, "Øvelsen er slettet.")} />
@@ -157,11 +162,20 @@ export function TrainingWorkspace({ data, loading, saving, runAction }: { data: 
           if (ok) setExerciseOpen(false);
         }}
       />
+      <TrainingFocusDialog
+        key={focusTraining?.id ?? "training-focus"}
+        open={Boolean(focusTraining)}
+        training={focusTraining}
+        data={data}
+        saving={saving}
+        onOpenChange={(open) => { if (!open) setFocusTraining(null); }}
+        onSave={(payload) => runAction({ action: "saveTrainingObservation", ...payload }, "Observasjonen er lagret.")}
+      />
     </section>
   );
 }
 
-function TrainingPlans({ data, loading, onAdd, onEdit, onDelete, onStatus }: { data: TrainingData; loading: boolean; onAdd: () => void; onEdit: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean> }) {
+function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStatus }: { data: TrainingData; loading: boolean; onAdd: () => void; onEdit: (training: Training) => void; onFocus: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean> }) {
   if (loading) return <LoadingCards />;
   if (!data.trainings.length) return <EmptyTraining onAdd={onAdd} />;
   const currentMonth = monthKey(new Date());
@@ -182,7 +196,7 @@ function TrainingPlans({ data, loading, onAdd, onEdit, onDelete, onStatus }: { d
       </AccordionTrigger>
       <AccordionContent className="p-3 pt-3">
         <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))" }}>
-          {group.trainings.map((training) => <TrainingCard key={training.id} training={training} data={data} onEdit={onEdit} onDelete={onDelete} onStatus={onStatus} />)}
+          {group.trainings.map((training) => <TrainingCard key={training.id} training={training} data={data} onEdit={onEdit} onFocus={onFocus} onDelete={onDelete} onStatus={onStatus} />)}
         </div>
       </AccordionContent>
     </AccordionItem>)}
@@ -190,7 +204,7 @@ function TrainingPlans({ data, loading, onAdd, onEdit, onDelete, onStatus }: { d
   </div>;
 }
 
-function TrainingCard({ training, data, onEdit, onDelete, onStatus }: { training: Training; data: TrainingData; onEdit: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean> }) {
+function TrainingCard({ training, data, onEdit, onFocus, onDelete, onStatus }: { training: Training; data: TrainingData; onEdit: (training: Training) => void; onFocus: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean> }) {
   const items = data.trainingExercises.filter((item) => item.trainingId === training.id);
   const plannedMinutes = items.reduce((sum, item) => sum + item.durationMinutes, 0);
   const attendanceCount = data.attendance.filter((entry) => entry.trainingId === training.id).length;
@@ -209,8 +223,78 @@ function TrainingCard({ training, data, onEdit, onDelete, onStatus }: { training
           return <div key={section} className="grid grid-cols-[30px_1fr] gap-2"><span className={`grid size-7 place-items-center rounded-lg text-xs font-bold ${meta.color}`}>{meta.short}</span><div><p className="text-xs font-bold">{meta.label}</p>{sectionItems.length ? <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{sectionItems.map((item) => data.exercises.find((exercise) => exercise.id === item.exerciseId)?.title).filter(Boolean).join(" · ")}</p> : <p className="mt-0.5 text-xs text-slate-400">Ingen øvelser lagt til</p>}</div></div>;
         })}
       </div>
-      <div className="flex flex-wrap gap-2 border-t p-3"><Button className="min-h-11 flex-1" variant="outline" onClick={() => onEdit(training)}><Pencil /> {training.status === "planned" ? "Åpne planen" : "Se trening"}</Button>{training.status === "planned" ? <><Button className="min-h-11" onClick={() => void onStatus(training.id, "completed")}><CheckCircle2 /> Gjennomført</Button><Button className="min-h-11" variant="ghost" onClick={() => void onStatus(training.id, "cancelled")}>Avlys</Button><DeleteButton label="Slett trening" description="Treningen, øvelsesplanen og oppmøtet blir slettet." onConfirm={() => void onDelete(training.id)} /></> : <Button className="min-h-11" variant="outline" onClick={() => void onStatus(training.id, "planned")}>Åpne igjen</Button>}</div>
+      <div className="flex flex-wrap gap-2 border-t p-3"><Button className="min-h-11 flex-1" variant="outline" onClick={() => onEdit(training)}><Pencil /> {training.status === "planned" ? "Åpne planen" : "Se trening"}</Button>{training.status !== "cancelled" && <Button className="min-h-11 flex-1 bg-amber-400 text-amber-950 hover:bg-amber-500" onClick={() => onFocus(training)}><Sparkles /> Treningsblikk</Button>}{training.status === "planned" ? <><Button className="min-h-11" onClick={() => void onStatus(training.id, "completed")}><CheckCircle2 /> Gjennomført</Button><Button className="min-h-11" variant="ghost" onClick={() => void onStatus(training.id, "cancelled")}>Avlys</Button><DeleteButton label="Slett trening" description="Treningen, øvelsesplanen og oppmøtet blir slettet." onConfirm={() => void onDelete(training.id)} /></> : <Button className="min-h-11" variant="outline" onClick={() => void onStatus(training.id, "planned")}>Åpne igjen</Button>}</div>
     </article>;
+}
+
+function TrainingFocusDialog({ open, training, data, saving, onOpenChange, onSave }: { open: boolean; training: Training | null; data: TrainingData; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (payload: Record<string, unknown>) => Promise<boolean> }) {
+  const [selectedPlayerId, setSelectedPlayerId] = useState<number | null>(null);
+  if (!training) return null;
+  const playerIds = new Set(data.attendance.filter((entry) => entry.trainingId === training.id).map((entry) => entry.playerId));
+  const players = data.players.filter((player) => playerIds.has(player.id)).sort((a, b) => a.name.localeCompare(b.name, "nb-NO"));
+  const observations = data.trainingObservations.filter((entry) => entry.trainingId === training.id);
+  const spokenCount = observations.filter((entry) => entry.spokenTo).length;
+  const followUpCount = observations.filter((entry) => entry.needsFollowUp && !entry.spokenTo).length;
+  const selectedPlayer = players.find((player) => player.id === selectedPlayerId) ?? null;
+  const selectedObservation = selectedPlayer ? observations.find((entry) => entry.playerId === selectedPlayer.id) : undefined;
+
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="h-[96dvh] max-h-[96dvh] w-[calc(100%-1rem)] max-w-4xl overflow-y-auto p-4 sm:p-6">
+      <DialogHeader>
+        <DialogTitle>Treningsblikk · {formatDate(training.date)}</DialogTitle>
+        <DialogDescription>Trykk på en spiller når du ser noe positivt eller vil huske en tilbakemelding. Dette er private trenernotater.</DialogDescription>
+      </DialogHeader>
+      <div className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 p-3 text-center">
+        <div><p className="text-xl font-black">{players.length}</p><p className="text-xs text-muted-foreground">På trening</p></div>
+        <div><p className="text-xl font-black text-emerald-700">{spokenCount}</p><p className="text-xs text-muted-foreground">Snakket med</p></div>
+        <div><p className="text-xl font-black text-amber-700">{followUpCount}</p><p className="text-xs text-muted-foreground">Må følges opp</p></div>
+      </div>
+      {players.length ? <div className="grid gap-2 sm:grid-cols-2">
+        {players.map((player) => {
+          const observation = observations.find((entry) => entry.playerId === player.id);
+          const stateClass = observation?.spokenTo ? "border-emerald-300 bg-emerald-50" : observation?.needsFollowUp ? "border-amber-300 bg-amber-50" : observation?.positiveCount ? "border-sky-200 bg-sky-50" : "bg-white";
+          return <button key={player.id} type="button" onClick={() => setSelectedPlayerId(player.id)} className={`min-h-20 rounded-2xl border p-3 text-left shadow-sm transition active:scale-[0.99] ${stateClass}`}>
+            <span className="flex items-start justify-between gap-2"><span className="font-bold">{player.name}</span>{observation?.spokenTo ? <Badge className="bg-emerald-600">Ferdig</Badge> : observation?.needsFollowUp ? <Badge className="bg-amber-500 text-amber-950">Følg opp</Badge> : null}</span>
+            <span className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">{observation?.positiveCount ? <span>⭐ {observation.positiveCount} positiv{observation.positiveCount === 1 ? "" : "e"}</span> : <span>Ikke observert ennå</span>}{observation?.note && <span>· Notat lagret</span>}</span>
+          </button>;
+        })}
+      </div> : <div className="rounded-2xl border border-dashed p-8 text-center"><Users className="mx-auto size-8 text-slate-400" /><p className="mt-3 font-semibold">Ingen er registrert på trening</p><p className="mt-1 text-sm text-muted-foreground">Legg inn oppmøtet i treningsplanen først.</p></div>}
+      <p className="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900"><strong>Tips:</strong> Bruk pluss for en positiv situasjon. Minus fjerner bare en feilregistrering – det betyr ikke en negativ vurdering.</p>
+    </DialogContent>
+    <ObservationSheet
+      key={`${training.id}-${selectedPlayer?.id ?? "none"}-${selectedObservation?.updatedAt ?? "new"}`}
+      open={Boolean(selectedPlayer)}
+      player={selectedPlayer}
+      observation={selectedObservation}
+      saving={saving}
+      onOpenChange={(isOpen) => { if (!isOpen) setSelectedPlayerId(null); }}
+      onSave={async (values) => {
+        if (!selectedPlayer) return;
+        const ok = await onSave({ trainingId: training.id, playerId: selectedPlayer.id, ...values });
+        if (ok) setSelectedPlayerId(null);
+      }}
+    />
+  </Dialog>;
+}
+
+function ObservationSheet({ open, player, observation, saving, onOpenChange, onSave }: { open: boolean; player: Player | null; observation?: TrainingObservation; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (values: { positiveCount: number; needsFollowUp: boolean; note: string; spokenTo: boolean }) => Promise<void> }) {
+  const [positiveCount, setPositiveCount] = useState(observation?.positiveCount ?? 0);
+  const [needsFollowUp, setNeedsFollowUp] = useState(observation?.needsFollowUp ?? false);
+  const [note, setNote] = useState(observation?.note ?? "");
+  const [spokenTo, setSpokenTo] = useState(observation?.spokenTo ?? false);
+  if (!player) return null;
+  return <Sheet open={open} onOpenChange={onOpenChange}>
+    <SheetContent className="w-[94vw] sm:max-w-md">
+      <SheetHeader><SheetTitle>{player.name}</SheetTitle><SheetDescription>Et raskt, privat huskekort mens treningen pågår.</SheetDescription></SheetHeader>
+      <div className="space-y-5 px-4 pb-6">
+        <div className="rounded-2xl border bg-sky-50 p-4"><p className="text-sm font-bold">Positive situasjoner</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Tell små øyeblikk du vil trekke frem etter treningen.</p><div className="mt-4 flex items-center justify-center gap-5"><Button aria-label="Fjern siste positive situasjon" className="size-12 rounded-full" disabled={positiveCount === 0} size="icon" type="button" variant="outline" onClick={() => setPositiveCount((count) => Math.max(0, count - 1))}><Minus /></Button><span className="min-w-12 text-center text-4xl font-black">{positiveCount}</span><Button aria-label="Legg til positiv situasjon" className="size-12 rounded-full bg-sky-600 hover:bg-sky-700" size="icon" type="button" onClick={() => setPositiveCount((count) => Math.min(99, count + 1))}><Plus /></Button></div></div>
+        <div><label className="text-sm font-bold" htmlFor={`observation-${player.id}`}>Hva skjedde?</label><Textarea id={`observation-${player.id}`} className="mt-2 min-h-28" maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} placeholder="For eksempel: Tok initiativ, hjalp en lagvenn eller prøvde igjen etter bom." /><p className="mt-1 text-right text-xs text-muted-foreground">{note.length}/500</p></div>
+        <Button className={`min-h-12 w-full ${needsFollowUp ? "bg-amber-500 text-amber-950 hover:bg-amber-600" : ""}`} type="button" variant={needsFollowUp ? "default" : "outline"} onClick={() => setNeedsFollowUp((value) => !value)}><MessageCircle /> {needsFollowUp ? "Skal følges opp" : "Merk: husk tilbakemelding"}</Button>
+        <Button className={`min-h-12 w-full ${spokenTo ? "bg-emerald-600 hover:bg-emerald-700" : ""}`} type="button" variant={spokenTo ? "default" : "outline"} onClick={() => setSpokenTo((value) => !value)}><CheckCircle2 /> {spokenTo ? "Snakket med" : "Marker når dere har snakket"}</Button>
+        <Button className="min-h-12 w-full" disabled={saving} type="button" onClick={() => void onSave({ positiveCount, needsFollowUp, note, spokenTo })}>{saving ? "Lagrer …" : "Lagre"}</Button>
+      </div>
+    </SheetContent>
+  </Sheet>;
 }
 
 function ExerciseLibrary({ exercises, loading, onAdd, onEdit, onDelete }: { exercises: Exercise[]; loading: boolean; onAdd: () => void; onEdit: (exercise: Exercise) => void; onDelete: (id: number) => Promise<boolean> }) {
