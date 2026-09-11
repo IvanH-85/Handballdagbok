@@ -12,7 +12,6 @@ import {
   Flame,
   Goal,
   MessageCircle,
-  Minus,
   Pencil,
   Plus,
   Search,
@@ -54,7 +53,8 @@ export type Training = { id: number; date: string; startTime: string; durationMi
 export type Attendance = { trainingId: number; playerId: number };
 export type Exercise = { id: number; seedKey: string | null; title: string; category: ExerciseCategory; description: string; durationMinutes: number; equipment: string; sourceTitle: string; sourceUrl: string };
 export type TrainingExercise = { id: number; trainingId: number; exerciseId: number; section: TrainingSectionKey; sortOrder: number; durationMinutes: number; notes: string };
-export type TrainingObservation = { trainingId: number; playerId: number; positiveCount: number; needsFollowUp: boolean; note: string; spokenTo: boolean; updatedAt: string };
+export type PositiveTag = "good_pass" | "good_shot" | "read_situation" | "good_defense" | "good_effort";
+export type TrainingObservation = { trainingId: number; playerId: number; positiveCount: number; positiveTags: PositiveTag[]; concern: boolean; needsFollowUp: boolean; note: string; spokenTo: boolean; updatedAt: string };
 
 type TrainingData = {
   players: Player[];
@@ -84,6 +84,19 @@ const sectionMeta: Record<TrainingSectionKey, { label: string; short: string; ic
 
 const categories = Object.keys(categoryMeta) as ExerciseCategory[];
 const sections = Object.keys(sectionMeta) as TrainingSectionKey[];
+const positiveOptions: Array<{ value: PositiveTag; label: string }> = [
+  { value: "good_pass", label: "Bra pasning" },
+  { value: "good_shot", label: "Bra skudd" },
+  { value: "read_situation", label: "Bra lest situasjon" },
+  { value: "good_defense", label: "Godt forsvarsspill" },
+  { value: "good_effort", label: "God innsats" },
+];
+
+function observationLabels(observation: TrainingObservation) {
+  const labels = observation.positiveTags.map((tag) => positiveOptions.find((option) => option.value === tag)?.label).filter(Boolean) as string[];
+  if (observation.concern) labels.push("Noe må adresseres");
+  return labels;
+}
 
 export function TrainingWorkspace({ data, loading, saving, runAction }: { data: TrainingData; loading: boolean; saving: boolean; runAction: RunAction }) {
   const [view, setView] = useState("plans");
@@ -233,16 +246,23 @@ function TrainingFocusDialog({ open, training, data, saving, onOpenChange, onSav
   const playerIds = new Set(data.attendance.filter((entry) => entry.trainingId === training.id).map((entry) => entry.playerId));
   const players = data.players.filter((player) => playerIds.has(player.id)).sort((a, b) => a.name.localeCompare(b.name, "nb-NO"));
   const observations = data.trainingObservations.filter((entry) => entry.trainingId === training.id);
+  const previousPending = data.trainingObservations.filter((entry) => {
+    if (entry.trainingId === training.id || entry.spokenTo || !playerIds.has(entry.playerId)) return false;
+    const sourceTraining = data.trainings.find((item) => item.id === entry.trainingId);
+    return Boolean(sourceTraining && sourceTraining.date < training.date && observationLabels(entry).length);
+  });
+  const pendingPlayerIds = new Set([...observations, ...previousPending].filter((entry) => !entry.spokenTo && observationLabels(entry).length).map((entry) => entry.playerId));
   const spokenCount = observations.filter((entry) => entry.spokenTo).length;
-  const followUpCount = observations.filter((entry) => entry.needsFollowUp && !entry.spokenTo).length;
+  const followUpCount = pendingPlayerIds.size;
   const selectedPlayer = players.find((player) => player.id === selectedPlayerId) ?? null;
   const selectedObservation = selectedPlayer ? observations.find((entry) => entry.playerId === selectedPlayer.id) : undefined;
+  const selectedCarryOver = selectedPlayer ? previousPending.filter((entry) => entry.playerId === selectedPlayer.id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) : [];
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="h-[96dvh] max-h-[96dvh] w-[calc(100%-1rem)] max-w-4xl overflow-y-auto p-4 sm:p-6">
       <DialogHeader>
         <DialogTitle>Treningsblikk · {formatDate(training.date)}</DialogTitle>
-        <DialogDescription>Trykk på en spiller når du ser noe positivt eller vil huske en tilbakemelding. Dette er private trenernotater.</DialogDescription>
+        <DialogDescription>Trykk på en spiller og velg det du observerte. Alt som registreres blir automatisk lagt til oppfølging.</DialogDescription>
       </DialogHeader>
       <div className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 p-3 text-center">
         <div><p className="text-xl font-black">{players.length}</p><p className="text-xs text-muted-foreground">På trening</p></div>
@@ -252,46 +272,58 @@ function TrainingFocusDialog({ open, training, data, saving, onOpenChange, onSav
       {players.length ? <div className="grid gap-2 sm:grid-cols-2">
         {players.map((player) => {
           const observation = observations.find((entry) => entry.playerId === player.id);
-          const stateClass = observation?.spokenTo ? "border-emerald-300 bg-emerald-50" : observation?.needsFollowUp ? "border-amber-300 bg-amber-50" : observation?.positiveCount ? "border-sky-200 bg-sky-50" : "bg-white";
+          const carryOver = previousPending.filter((entry) => entry.playerId === player.id);
+          const labels = observation ? observationLabels(observation) : [];
+          const needsFollowUp = (!observation?.spokenTo && labels.length > 0) || carryOver.length > 0;
+          const stateClass = needsFollowUp ? "border-amber-300 bg-amber-50" : observation?.spokenTo ? "border-emerald-300 bg-emerald-50" : "bg-white";
           return <button key={player.id} type="button" onClick={() => setSelectedPlayerId(player.id)} className={`min-h-20 rounded-2xl border p-3 text-left shadow-sm transition active:scale-[0.99] ${stateClass}`}>
-            <span className="flex items-start justify-between gap-2"><span className="font-bold">{player.name}</span>{observation?.spokenTo ? <Badge className="bg-emerald-600">Ferdig</Badge> : observation?.needsFollowUp ? <Badge className="bg-amber-500 text-amber-950">Følg opp</Badge> : null}</span>
-            <span className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">{observation?.positiveCount ? <span>⭐ {observation.positiveCount} positiv{observation.positiveCount === 1 ? "" : "e"}</span> : <span>Ikke observert ennå</span>}{observation?.note && <span>· Notat lagret</span>}</span>
+            <span className="flex items-start justify-between gap-2"><span className="font-bold">{player.name}</span>{needsFollowUp ? <Badge className="bg-amber-500 text-amber-950">Følg opp</Badge> : observation?.spokenTo ? <Badge className="bg-emerald-600">Ferdig</Badge> : null}</span>
+            <span className="mt-2 block text-xs leading-5 text-muted-foreground">{labels.length ? labels.join(" · ") : "Ikke observert ennå"}{carryOver.length ? ` · ${carryOver.length} fra tidligere` : ""}</span>
           </button>;
         })}
       </div> : <div className="rounded-2xl border border-dashed p-8 text-center"><Users className="mx-auto size-8 text-slate-400" /><p className="mt-3 font-semibold">Ingen er registrert på trening</p><p className="mt-1 text-sm text-muted-foreground">Legg inn oppmøtet i treningsplanen først.</p></div>}
-      <p className="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900"><strong>Tips:</strong> Bruk pluss for en positiv situasjon. Minus fjerner bare en feilregistrering – det betyr ikke en negativ vurdering.</p>
+      <p className="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900"><strong>Automatisk huskeliste:</strong> Spilleren står som «Følg opp» til dere har markert at samtalen er tatt. Uferdige tilbakemeldinger følger med til neste trening.</p>
     </DialogContent>
     <ObservationSheet
       key={`${training.id}-${selectedPlayer?.id ?? "none"}-${selectedObservation?.updatedAt ?? "new"}`}
       open={Boolean(selectedPlayer)}
       player={selectedPlayer}
       observation={selectedObservation}
+      carryOver={selectedCarryOver}
+      trainings={data.trainings}
       saving={saving}
       onOpenChange={(isOpen) => { if (!isOpen) setSelectedPlayerId(null); }}
       onSave={async (values) => {
         if (!selectedPlayer) return;
-        const ok = await onSave({ trainingId: training.id, playerId: selectedPlayer.id, ...values });
+        const ok = await onSave({ trainingId: training.id, playerId: selectedPlayer.id, positiveCount: 0, needsFollowUp: values.positiveTags.length > 0 || values.concern, note: "", ...values });
+        if (ok) setSelectedPlayerId(null);
+      }}
+      onResolveCarryOver={async (entry) => {
+        const ok = await onSave({ ...entry, positiveCount: 0, needsFollowUp: true, spokenTo: true });
         if (ok) setSelectedPlayerId(null);
       }}
     />
   </Dialog>;
 }
 
-function ObservationSheet({ open, player, observation, saving, onOpenChange, onSave }: { open: boolean; player: Player | null; observation?: TrainingObservation; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (values: { positiveCount: number; needsFollowUp: boolean; note: string; spokenTo: boolean }) => Promise<void> }) {
-  const [positiveCount, setPositiveCount] = useState(observation?.positiveCount ?? 0);
-  const [needsFollowUp, setNeedsFollowUp] = useState(observation?.needsFollowUp ?? false);
-  const [note, setNote] = useState(observation?.note ?? "");
+function ObservationSheet({ open, player, observation, carryOver, trainings, saving, onOpenChange, onSave, onResolveCarryOver }: { open: boolean; player: Player | null; observation?: TrainingObservation; carryOver: TrainingObservation[]; trainings: Training[]; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (values: { positiveTags: PositiveTag[]; concern: boolean; spokenTo: boolean }) => Promise<void>; onResolveCarryOver: (entry: TrainingObservation) => Promise<void> }) {
+  const [positiveTags, setPositiveTags] = useState<PositiveTag[]>(observation?.positiveTags ?? []);
+  const [concern, setConcern] = useState(observation?.concern ?? false);
   const [spokenTo, setSpokenTo] = useState(observation?.spokenTo ?? false);
   if (!player) return null;
+  function toggleTag(tag: PositiveTag) {
+    setPositiveTags((current) => current.includes(tag) ? current.filter((value) => value !== tag) : [...current, tag]);
+    setSpokenTo(false);
+  }
   return <Sheet open={open} onOpenChange={onOpenChange}>
     <SheetContent className="w-[94vw] sm:max-w-md">
       <SheetHeader><SheetTitle>{player.name}</SheetTitle><SheetDescription>Et raskt, privat huskekort mens treningen pågår.</SheetDescription></SheetHeader>
-      <div className="space-y-5 px-4 pb-6">
-        <div className="rounded-2xl border bg-sky-50 p-4"><p className="text-sm font-bold">Positive situasjoner</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Tell små øyeblikk du vil trekke frem etter treningen.</p><div className="mt-4 flex items-center justify-center gap-5"><Button aria-label="Fjern siste positive situasjon" className="size-12 rounded-full" disabled={positiveCount === 0} size="icon" type="button" variant="outline" onClick={() => setPositiveCount((count) => Math.max(0, count - 1))}><Minus /></Button><span className="min-w-12 text-center text-4xl font-black">{positiveCount}</span><Button aria-label="Legg til positiv situasjon" className="size-12 rounded-full bg-sky-600 hover:bg-sky-700" size="icon" type="button" onClick={() => setPositiveCount((count) => Math.min(99, count + 1))}><Plus /></Button></div></div>
-        <div><label className="text-sm font-bold" htmlFor={`observation-${player.id}`}>Hva skjedde?</label><Textarea id={`observation-${player.id}`} className="mt-2 min-h-28" maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} placeholder="For eksempel: Tok initiativ, hjalp en lagvenn eller prøvde igjen etter bom." /><p className="mt-1 text-right text-xs text-muted-foreground">{note.length}/500</p></div>
-        <Button className={`min-h-12 w-full ${needsFollowUp ? "bg-amber-500 text-amber-950 hover:bg-amber-600" : ""}`} type="button" variant={needsFollowUp ? "default" : "outline"} onClick={() => setNeedsFollowUp((value) => !value)}><MessageCircle /> {needsFollowUp ? "Skal følges opp" : "Merk: husk tilbakemelding"}</Button>
-        <Button className={`min-h-12 w-full ${spokenTo ? "bg-emerald-600 hover:bg-emerald-700" : ""}`} type="button" variant={spokenTo ? "default" : "outline"} onClick={() => setSpokenTo((value) => !value)}><CheckCircle2 /> {spokenTo ? "Snakket med" : "Marker når dere har snakket"}</Button>
-        <Button className="min-h-12 w-full" disabled={saving} type="button" onClick={() => void onSave({ positiveCount, needsFollowUp, note, spokenTo })}>{saving ? "Lagrer …" : "Lagre"}</Button>
+      <div className="space-y-4 overflow-y-auto px-4 pb-6">
+        {carryOver.length > 0 && <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3"><p className="font-bold text-amber-950">Fra tidligere trening</p>{carryOver.map((entry) => { const source = trainings.find((item) => item.id === entry.trainingId); return <div key={entry.trainingId} className="mt-3 rounded-xl bg-white p-3"><p className="text-xs font-semibold text-muted-foreground">{source ? formatDate(source.date) : "Tidligere trening"}</p><p className="mt-1 text-sm font-semibold">{observationLabels(entry).join(" · ")}</p><Button className="mt-3 min-h-11 w-full" disabled={saving} type="button" variant="outline" onClick={() => void onResolveCarryOver(entry)}><CheckCircle2 /> Snakket om dette</Button></div>; })}</div>}
+        <div><p className="text-sm font-bold">Hva gjorde spilleren bra?</p><div className="mt-2 grid grid-cols-2 gap-2">{positiveOptions.map((option) => { const active = positiveTags.includes(option.value); return <Button key={option.value} className={`min-h-14 h-auto whitespace-normal px-3 py-2 leading-5 ${active ? "bg-sky-600 hover:bg-sky-700" : ""}`} type="button" variant={active ? "default" : "outline"} onClick={() => toggleTag(option.value)}><Sparkles /> {option.label}</Button>; })}</div></div>
+        <Button className={`min-h-14 w-full h-auto whitespace-normal ${concern ? "bg-amber-500 text-amber-950 hover:bg-amber-600" : ""}`} type="button" variant={concern ? "default" : "outline"} onClick={() => { setConcern((value) => !value); setSpokenTo(false); }}><MessageCircle /> {concern ? "Skal adresseres" : "Noe må adresseres"}</Button>
+        {(positiveTags.length > 0 || concern || observation) && <Button className={`min-h-12 w-full ${spokenTo ? "bg-emerald-600 hover:bg-emerald-700" : ""}`} type="button" variant={spokenTo ? "default" : "outline"} onClick={() => setSpokenTo((value) => !value)}><CheckCircle2 /> {spokenTo ? "Snakket med" : "Marker når dere har snakket"}</Button>}
+        <Button className="min-h-12 w-full" disabled={saving || (positiveTags.length === 0 && !concern && !observation)} type="button" onClick={() => void onSave({ positiveTags, concern, spokenTo })}>{saving ? "Lagrer …" : "Lagre"}</Button>
       </div>
     </SheetContent>
   </Sheet>;
