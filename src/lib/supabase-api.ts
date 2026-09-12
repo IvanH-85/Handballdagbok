@@ -101,6 +101,12 @@ export async function fetchSnapshot<T>(accessToken: string): Promise<T> {
   return jsonRequest("/rest/v1/rpc/season_snapshot", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
 }
 
+export async function fetchLiveMatch<T>(accessToken: string, matchId: number): Promise<T> {
+  return jsonRequest("/rest/v1/rpc/live_match_snapshot", {
+    method: "POST", body: JSON.stringify({ match_id_input: matchId }),
+  }, accessToken) as Promise<T>;
+}
+
 export async function fetchUserLoginActivity<T>(accessToken: string): Promise<T> {
   return jsonRequest("/rest/v1/rpc/user_login_activity", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
 }

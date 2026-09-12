@@ -55,7 +55,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import { trainingThemeOptions } from "@/lib/training-themes";
 import { fetchSeriesTable, type SeriesTableData } from "@/lib/series-standings";
-import { applyAction, clearAuthCallback, fetchSnapshot, fetchTrainingObservations, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
+import { applyAction, clearAuthCallback, fetchLiveMatch, fetchSnapshot, fetchTrainingObservations, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
 import { MatchWorkspace } from "./match-workspace";
 import { TrainingWorkspace, type Exercise, type TrainingExercise, type TrainingObservation } from "./training-workspace";
 
@@ -77,6 +77,7 @@ type MatchSubstitution = { id: number; matchId: number; playerInId: number; play
 type RosterEntry = { playerId: number; starter: boolean; goalkeeper: boolean; captain: boolean; position: Position };
 type EventType = "goal_open" | "goal_penalty" | "penalty_miss" | "yellow" | "two_min" | "red" | "save_open" | "save_penalty";
 type MatchRegistrar = { matchId: number; userId: number };
+type LiveMatchData = { match: Match; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[] };
 type CloudStorageStatus = { provider: string; configured: boolean; mode: "prepared" };
 type SeasonData = { players: Player[]; trainings: Training[]; attendance: Attendance[]; exercises: Exercise[]; trainingExercises: TrainingExercise[]; trainingObservations: TrainingObservation[]; matches: Match[]; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; appUsers: AppUser[]; userLoginStats: UserLoginStat[]; matchRegistrars: MatchRegistrar[]; seriesTable: SeriesTableData | null; currentUser: CurrentUser | null; cloudStorage: CloudStorageStatus };
 type AuthSession = { accessToken: string; refreshToken: string; expiresAt: number };
@@ -227,6 +228,45 @@ export function SeasonApp() {
     // Initialisering skal bare kjøres én gang på denne enheten.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!authSession || !activeMatchId) return;
+    let cancelled = false;
+    let requestInFlight = false;
+
+    const syncOpenMatch = async () => {
+      if (cancelled || requestInFlight || document.visibilityState === "hidden") return;
+      requestInFlight = true;
+      try {
+        const live = await fetchLiveMatch<LiveMatchData>(await getAccessToken(), activeMatchId);
+        if (cancelled || !live.match) return;
+        setData((current) => ({
+          ...current,
+          matches: current.matches.map((match) => match.id === activeMatchId ? live.match : match),
+          matchEvents: [...current.matchEvents.filter((event) => event.matchId !== activeMatchId), ...live.matchEvents],
+          matchSubstitutions: [...current.matchSubstitutions.filter((entry) => entry.matchId !== activeMatchId), ...live.matchSubstitutions],
+        }));
+      } catch {
+        // En midlertidig nettverksfeil skal ikke avbryte kampregistreringen.
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    const syncWhenVisible = () => { if (document.visibilityState === "visible") void syncOpenMatch(); };
+    void syncOpenMatch();
+    const interval = window.setInterval(() => void syncOpenMatch(), 2_000);
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    window.addEventListener("focus", syncWhenVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+      window.removeEventListener("focus", syncWhenVisible);
+    };
+    // Tilgangstokenet hentes fra sessionRef slik at intervallet ikke må opprettes på nytt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMatchId, authSession]);
 
   async function refresh(showLoading = false) {
     if (showLoading) setLoading(true);
