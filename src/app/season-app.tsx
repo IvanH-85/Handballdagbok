@@ -55,7 +55,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import { trainingThemeOptions } from "@/lib/training-themes";
 import { fetchSeriesTable, type SeriesTableData } from "@/lib/series-standings";
-import { applyAction, clearAuthCallback, fetchLiveMatch, fetchSnapshot, fetchTrainingObservations, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
+import { applyAction, clearAuthCallback, fetchCupSnapshot, fetchLiveMatch, fetchSnapshot, fetchTrainingObservations, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
 import { MatchWorkspace } from "./match-workspace";
 import { TrainingWorkspace, type Exercise, type TrainingExercise, type TrainingObservation } from "./training-workspace";
 
@@ -77,12 +77,18 @@ type MatchSubstitution = { id: number; matchId: number; playerInId: number; play
 type RosterEntry = { playerId: number; starter: boolean; goalkeeper: boolean; captain: boolean; position: Position };
 type EventType = "goal_open" | "goal_penalty" | "penalty_miss" | "yellow" | "two_min" | "red" | "save_open" | "save_penalty";
 type MatchRegistrar = { matchId: number; userId: number };
+type Cup = { id: number; name: string; startDate: string; endDate: string; venue: string; periodMinutes: number; createdAt: string };
+type CupTeam = { id: number; cupId: number; name: string; sortOrder: number };
+type CupTeamPlayer = { cupId: number; cupTeamId: number; playerId: number };
+type PlayerGuardian = { playerId: number; userId: number };
+type CupMatchLink = { matchId: number; cupId: number; cupTeamId: number };
+type CupData = { cups: Cup[]; cupTeams: CupTeam[]; cupTeamPlayers: CupTeamPlayer[]; playerGuardians: PlayerGuardian[]; cupMatchLinks: CupMatchLink[] };
 type LiveMatchData = { match: Match; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[] };
 type CloudStorageStatus = { provider: string; configured: boolean; mode: "prepared" };
-type SeasonData = { players: Player[]; trainings: Training[]; attendance: Attendance[]; exercises: Exercise[]; trainingExercises: TrainingExercise[]; trainingObservations: TrainingObservation[]; matches: Match[]; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; appUsers: AppUser[]; userLoginStats: UserLoginStat[]; matchRegistrars: MatchRegistrar[]; seriesTable: SeriesTableData | null; currentUser: CurrentUser | null; cloudStorage: CloudStorageStatus };
+type SeasonData = { players: Player[]; trainings: Training[]; attendance: Attendance[]; exercises: Exercise[]; trainingExercises: TrainingExercise[]; trainingObservations: TrainingObservation[]; matches: Match[]; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; appUsers: AppUser[]; userLoginStats: UserLoginStat[]; matchRegistrars: MatchRegistrar[]; cups: Cup[]; cupTeams: CupTeam[]; cupTeamPlayers: CupTeamPlayer[]; playerGuardians: PlayerGuardian[]; cupMatchLinks: CupMatchLink[]; seriesTable: SeriesTableData | null; currentUser: CurrentUser | null; cloudStorage: CloudStorageStatus };
 type AuthSession = { accessToken: string; refreshToken: string; expiresAt: number };
 
-const emptyData: SeasonData = { players: [], trainings: [], attendance: [], exercises: [], trainingExercises: [], trainingObservations: [], matches: [], matchPlayers: [], matchEvents: [], matchSubstitutions: [], appUsers: [], userLoginStats: [], matchRegistrars: [], seriesTable: null, currentUser: null, cloudStorage: { provider: "Supabase", configured: false, mode: "prepared" } };
+const emptyData: SeasonData = { players: [], trainings: [], attendance: [], exercises: [], trainingExercises: [], trainingObservations: [], matches: [], matchPlayers: [], matchEvents: [], matchSubstitutions: [], appUsers: [], userLoginStats: [], matchRegistrars: [], cups: [], cupTeams: [], cupTeamPlayers: [], playerGuardians: [], cupMatchLinks: [], seriesTable: null, currentUser: null, cloudStorage: { provider: "Supabase", configured: false, mode: "prepared" } };
 const authStorageKey = "sthk-season-auth-v1";
 const eventInfo: Record<EventType, { short: string; label: string; className: string }> = {
   goal_open: { short: "Mål", label: "Mål åpent spill", className: "bg-emerald-600 text-white" },
@@ -125,10 +131,11 @@ function readStoredSession(): AuthSession | null {
 
 async function fetchSeasonData(accessToken: string): Promise<SeasonData> {
   const data = await fetchSnapshot<Partial<SeasonData>>(accessToken);
+  const cupData = await fetchCupSnapshot<CupData>(accessToken);
   const userLoginStats = await fetchUserLoginActivity<UserLoginStat[]>(accessToken);
   const trainingObservations = data.currentUser?.role === "admin" ? await fetchTrainingObservations<TrainingObservation[]>(accessToken) : [];
   const seriesTable = data.currentUser?.role === "admin" ? await fetchSeriesTable().catch(() => null) : null;
-  return { ...emptyData, ...data, trainingObservations, userLoginStats, seriesTable };
+  return { ...emptyData, ...data, ...cupData, trainingObservations, userLoginStats, seriesTable };
 }
 
 export function SeasonApp() {
@@ -144,6 +151,10 @@ export function SeasonApp() {
   const [userFormOpen, setUserFormOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
   const [editingMatch, setEditingMatch] = useState<Match | null>(null);
+  const [cupFormOpen, setCupFormOpen] = useState(false);
+  const [editingCup, setEditingCup] = useState<Cup | null>(null);
+  const [activeCupId, setActiveCupId] = useState<number | null>(null);
+  const [cupMatchContext, setCupMatchContext] = useState<{ cup: Cup; team: CupTeam } | null>(null);
   const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState<number | null>(null);
   const [previewRole, setPreviewRole] = useState<AppRole>("admin");
@@ -382,6 +393,8 @@ export function SeasonApp() {
               onOpen={setActiveMatchId}
               onDelete={(id) => runAction({ action: "deleteMatch", id }, "Kampen er slettet.")}
               onStatus={(id, status) => runAction({ action: "setMatchStatus", matchId: id, status }, status === "planned" ? "Kampen er åpnet igjen." : "Kampen er markert som avlyst.")}
+              onAddCup={() => { setEditingCup(null); setCupFormOpen(true); }}
+              onOpenCup={setActiveCupId}
               isAdmin={isAdmin}
               canRecordMatch={canRecordMatch}
             />
@@ -411,7 +424,7 @@ export function SeasonApp() {
         }}
       />
       <MatchFormDialog
-        key={editingMatch?.id ?? "new-match"}
+        key={editingMatch?.id ?? (cupMatchContext ? `cup-${cupMatchContext.cup.id}-team-${cupMatchContext.team.id}` : "new-match")}
         open={matchFormOpen}
         saving={saving}
         match={editingMatch}
@@ -420,12 +433,52 @@ export function SeasonApp() {
         matchPlayers={data.matchPlayers}
         users={data.appUsers}
         matchRegistrars={data.matchRegistrars}
+        cupContext={cupMatchContext}
+        cupMatchLinks={data.cupMatchLinks}
+        cups={data.cups}
+        cupTeams={data.cupTeams}
+        cupTeamPlayers={data.cupTeamPlayers}
+        playerGuardians={data.playerGuardians}
         onOpenChange={setMatchFormOpen}
         onSave={async (payload) => {
-          const ok = await runAction({ action: "saveMatch", ...payload }, editingMatch ? "Kampen er oppdatert." : "Kampen er lagt til.");
-          if (ok) setMatchFormOpen(false);
+          const action = !editingMatch && payload.cupId ? "saveCupMatch" : "saveMatch";
+          const ok = await runAction({ action, ...payload }, editingMatch ? "Kampen er oppdatert." : "Kampen er lagt til.");
+          if (ok) { setMatchFormOpen(false); setCupMatchContext(null); }
         }}
       />
+      <CupFormDialog
+        key={editingCup?.id ?? "new-cup"}
+        open={cupFormOpen}
+        saving={saving}
+        cup={editingCup}
+        teams={data.cupTeams}
+        onOpenChange={setCupFormOpen}
+        onSave={async (payload) => {
+          const ok = await runAction({ action: "saveCup", ...payload }, editingCup ? "Cupen er oppdatert." : "Cupen er opprettet.");
+          if (ok) setCupFormOpen(false);
+        }}
+      />
+      {activeCupId && data.cups.some((cup) => cup.id === activeCupId) && <CupWorkspaceDialog
+        key={activeCupId}
+        open
+        saving={saving}
+        isAdmin={isAdmin}
+        cup={data.cups.find((cup) => cup.id === activeCupId)!}
+        data={data}
+        canRecordMatch={canRecordMatch}
+        onOpenChange={(open) => { if (!open) setActiveCupId(null); }}
+        onEditCup={(cup) => { setEditingCup(cup); setCupFormOpen(true); }}
+        onAddMatch={(cup, team) => { setActiveCupId(null); setEditingMatch(null); setCupMatchContext({ cup, team }); setMatchFormOpen(true); }}
+        onEditMatch={(match) => { setActiveCupId(null); setEditingMatch(match); setCupMatchContext(null); setMatchFormOpen(true); }}
+        onOpenMatch={setActiveMatchId}
+        onDeleteMatch={(id) => runAction({ action: "deleteMatch", id }, "Kampen er slettet.")}
+        onStatus={(id, status) => runAction({ action: "setMatchStatus", matchId: id, status }, status === "planned" ? "Kampen er åpnet igjen." : "Kampen er markert som avlyst.")}
+        onSaveRosters={(assignments) => runAction({ action: "saveCupRosters", cupId: activeCupId, assignments }, "Lagfordelingen er lagret.")}
+        onDeleteCup={async () => {
+          const ok = await runAction({ action: "deleteCup", cupId: activeCupId }, "Cupen er slettet.");
+          if (ok) setActiveCupId(null);
+        }}
+      />}
       {selectedPlayerId && <PlayerProfileDialog player={data.players.find((player) => player.id === selectedPlayerId) ?? null} data={data} open={Boolean(selectedPlayerId)} onOpenChange={(open) => { if (!open) setSelectedPlayerId(null); }} />}
       <UserDialog
         key={editingUser?.id ?? "new-user"}
@@ -572,7 +625,7 @@ function NextCard({ icon: Icon, eyebrow, item, detail, action, onClick }: { icon
   return <article className="rounded-3xl border bg-white p-5 shadow-sm"><div className="flex items-start gap-4"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-secondary text-primary"><Icon className="size-5" /></span><div className="min-w-0 flex-1"><p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">{eyebrow}</p><h2 className="mt-1 break-words text-lg font-bold leading-snug">{item}</h2><p className="mt-1 text-sm text-muted-foreground">{detail}</p><Button className="mt-4" size="sm" variant="outline" onClick={onClick}>{action}</Button></div></div></article>;
 }
 
-function MatchSection({ data, loading, onAdd, onEdit, onOpen, onDelete, onStatus, isAdmin, canRecordMatch }: { data: SeasonData; loading: boolean; onAdd: () => void; onEdit: (match: Match) => void; onOpen: (id: number) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: "planned" | "cancelled") => Promise<boolean>; isAdmin: boolean; canRecordMatch: (matchId: number) => boolean }) {
+function MatchSection({ data, loading, onAdd, onEdit, onOpen, onDelete, onStatus, onAddCup, onOpenCup, isAdmin, canRecordMatch }: { data: SeasonData; loading: boolean; onAdd: () => void; onEdit: (match: Match) => void; onOpen: (id: number) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: "planned" | "cancelled") => Promise<boolean>; onAddCup: () => void; onOpenCup: (id: number) => void; isAdmin: boolean; canRecordMatch: (matchId: number) => boolean }) {
   const [matchType, setMatchType] = useState<MatchType>("league");
   const completed = data.matches.filter((match) => match.status === "completed").length;
   const planned = data.matches.filter((match) => match.status === "planned" || match.status === "live").length;
@@ -583,10 +636,26 @@ function MatchSection({ data, loading, onAdd, onEdit, onOpen, onDelete, onStatus
     {loading ? <LoadingCards /> : data.matches.length === 0 ? <EmptyState icon={Trophy} title="Ingen kamper lagt inn" text="Legg inn kampene på forhånd og fyll ut hendelser underveis eller etterpå." /> : <Tabs value={matchType} onValueChange={(value) => setMatchType(value as MatchType)}>
       <TabsList className="grid min-h-14 w-full grid-cols-3 rounded-2xl bg-slate-100 p-1"><TabsTrigger className="min-h-12 rounded-xl" value="league">Serie <span className="ml-1 text-xs opacity-70">{typeCounts.league}</span></TabsTrigger><TabsTrigger className="min-h-12 rounded-xl" value="cup">Cup <span className="ml-1 text-xs opacity-70">{typeCounts.cup}</span></TabsTrigger><TabsTrigger className="min-h-12 rounded-xl" value="friendly">Vennskap <span className="ml-1 text-xs opacity-70">{typeCounts.friendly}</span></TabsTrigger></TabsList>
       <TabsContent className="mt-2" value="league"><MonthMatchTabs matches={matchesByType("league")} emptyText="Ingen seriekamper." {...cardProps} /></TabsContent>
-      <TabsContent className="mt-2" value="cup"><MonthMatchTabs matches={matchesByType("cup")} emptyText="Ingen cupkamper." groupCups {...cardProps} /></TabsContent>
+      <TabsContent className="mt-2" value="cup"><CupOverview data={data} matches={matchesByType("cup")} isAdmin={isAdmin} onAddCup={onAddCup} onOpenCup={onOpenCup} actions={cardProps} /></TabsContent>
       <TabsContent className="mt-2" value="friendly"><MonthMatchTabs matches={matchesByType("friendly")} emptyText="Ingen vennskapskamper." {...cardProps} /></TabsContent>
     </Tabs>}
   </SectionCard>;
+}
+
+function CupOverview({ data, matches, isAdmin, onAddCup, onOpenCup, actions }: { data: SeasonData; matches: Match[]; isAdmin: boolean; onAddCup: () => void; onOpenCup: (id: number) => void; actions: MatchListActions }) {
+  const linkedIds = new Set(data.cupMatchLinks.map((link) => link.matchId));
+  const legacyMatches = matches.filter((match) => !linkedIds.has(match.id));
+  return <div className="space-y-4">
+    {isAdmin && <div className="flex justify-end"><Button onClick={onAddCup}><Plus /> Ny cup</Button></div>}
+    {data.cups.length === 0 ? <p className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">Ingen cuper er opprettet ennå.</p> : <div className="grid gap-3 lg:grid-cols-2">{data.cups.map((cup) => {
+      const teams = data.cupTeams.filter((team) => team.cupId === cup.id);
+      const links = data.cupMatchLinks.filter((link) => link.cupId === cup.id);
+      const cupMatches = matches.filter((match) => links.some((link) => link.matchId === match.id));
+      const playerCount = data.cupTeamPlayers.filter((entry) => entry.cupId === cup.id).length;
+      return <article key={cup.id} className="rounded-2xl border bg-red-50/30 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-primary">Cup</p><h3 className="mt-1 text-xl font-black">{cup.name}</h3><p className="mt-1 text-sm text-muted-foreground">{formatCupDates(cup)}{cup.venue ? ` · ${cup.venue}` : ""}</p></div><Badge variant="secondary">{cupMatches.length} kamper</Badge></div><div className="mt-3 flex flex-wrap gap-2"><Badge variant="outline">{teams.length} {teams.length === 1 ? "lag" : "lag"}</Badge><Badge variant="outline">{playerCount} spillerplasser</Badge><Badge variant="outline">2 × {cup.periodMinutes} min</Badge></div><div className="mt-4"><Button size="sm" onClick={() => onOpenCup(cup.id)}>{isAdmin ? "Åpne og planlegg cup" : "Se cup og kamper"}</Button></div></article>;
+    })}</div>}
+    {legacyMatches.length > 0 && <section><h3 className="mb-3 font-bold">Andre cupkamper</h3><MonthMatchTabs matches={legacyMatches} emptyText="Ingen cupkamper." groupCups {...actions} /></section>}
+  </div>;
 }
 
 type MatchListActions = { data: SeasonData; onEdit: (match: Match) => void; onOpen: (id: number) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: "planned" | "cancelled") => Promise<boolean>; isAdmin: boolean; canRecordMatch: (matchId: number) => boolean };
@@ -648,7 +717,11 @@ function PlayerSection({ data, loading, onAdd, onOpen, onToggle }: { data: Seaso
   const players = data.players;
   const activeCount = players.filter((player) => Boolean(player.active)).length;
   return <SectionCard eyebrow="Spillerregister" title="Laget" count={`${activeCount} aktive spillere`} actionLabel="Legg til spiller" onAction={onAdd}>
-    {loading ? <LoadingCards /> : players.length === 0 ? <EmptyState icon={UserRound} title="Ingen spillere lagt inn ennå" text="Start med å legge inn spillerne på laget." /> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{players.map((player) => { const completedMatches = data.matchPlayers.filter((entry) => entry.playerId === player.id && data.matches.some((match) => match.id === entry.matchId && match.status === "completed")).length; return <article key={player.id} className={`flex items-center justify-between gap-2 rounded-2xl border p-2 ${player.active ? "bg-white" : "bg-slate-50 opacity-60"}`}><button type="button" onClick={() => onOpen(player.id)} className="flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-xl p-2 text-left transition hover:bg-red-50"><span className="grid size-12 shrink-0 place-items-center rounded-xl bg-primary font-black text-primary-foreground">{player.jerseyNumber ? `#${player.jerseyNumber}` : "–"}</span><span className="min-w-0"><span className="block truncate font-semibold">{player.name}</span><span className="mt-0.5 block text-xs text-muted-foreground">{completedMatches} kamper · Trykk for profil</span></span></button><Button className="shrink-0" size="sm" variant="ghost" onClick={() => void onToggle(player)}>{player.active ? "Deaktiver" : "Aktiver"}</Button></article>; })}</div>}
+    {loading ? <LoadingCards /> : players.length === 0 ? <EmptyState icon={UserRound} title="Ingen spillere lagt inn ennå" text="Start med å legge inn spillerne på laget." /> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{players.map((player) => {
+      const completedMatches = data.matchPlayers.filter((entry) => entry.playerId === player.id && data.matches.some((match) => match.id === entry.matchId && match.status === "completed")).length;
+      const guardians = guardianNames(player.id, data);
+      return <article key={player.id} className={`flex items-center justify-between gap-2 rounded-2xl border p-2 ${player.active ? "bg-white" : "bg-slate-50 opacity-60"}`}><button type="button" onClick={() => onOpen(player.id)} className="flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-xl p-2 text-left transition hover:bg-red-50"><span className="grid size-12 shrink-0 place-items-center rounded-xl bg-primary font-black text-primary-foreground">{player.jerseyNumber ? `#${player.jerseyNumber}` : "–"}</span><span className="min-w-0"><span className="block truncate font-semibold">{player.name}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">Foresatte: {guardians || "Ikke registrert"}</span><span className="mt-0.5 block text-xs text-muted-foreground">{completedMatches} kamper · Trykk for profil</span></span></button><Button className="shrink-0" size="sm" variant="ghost" onClick={() => void onToggle(player)}>{player.active ? "Deaktiver" : "Aktiver"}</Button></article>;
+    })}</div>}
   </SectionCard>;
 }
 
@@ -740,21 +813,47 @@ function ProfileStat({ label, value }: { label: string; value: number }) {
   return <div className="rounded-2xl bg-primary p-3 text-center text-primary-foreground"><p className="text-2xl font-black">{value}</p><p className="text-xs text-red-100">{label}</p></div>;
 }
 
-function MatchFormDialog({ open, saving, match, matches, players, matchPlayers, users, matchRegistrars, onOpenChange, onSave }: { open: boolean; saving: boolean; match: Match | null; matches: Match[]; players: Player[]; matchPlayers: MatchPlayer[]; users: AppUser[]; matchRegistrars: MatchRegistrar[]; onOpenChange: (open: boolean) => void; onSave: (payload: Record<string, unknown>) => Promise<void> }) {
-  const [date, setDate] = useState(match?.date ?? "");
+function CupFormDialog({ open, saving, cup, teams, onOpenChange, onSave }: { open: boolean; saving: boolean; cup: Cup | null; teams: CupTeam[]; onOpenChange: (open: boolean) => void; onSave: (payload: Record<string, unknown>) => Promise<void> }) {
+  const [name, setName] = useState(cup?.name ?? "");
+  const [startDate, setStartDate] = useState(cup?.startDate ?? "");
+  const [endDate, setEndDate] = useState(cup?.endDate ?? "");
+  const [venue, setVenue] = useState(cup?.venue ?? "");
+  const [periodMinutes, setPeriodMinutes] = useState(cup?.periodMinutes ?? 18);
+  const [teamCount, setTeamCount] = useState(cup ? teams.filter((team) => team.cupId === cup.id).length || 1 : 1);
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-xl"><form onSubmit={(event) => { event.preventDefault(); void onSave({ cupId: cup?.id, name, startDate, endDate: endDate || startDate, venue, periodMinutes, teamCount }); }}><DialogHeader><DialogTitle>{cup ? "Rediger cup" : "Opprett cup"}</DialogTitle><DialogDescription>Opprett cupen og lagene først. Kampene legges inn når kampoppsettet er klart.</DialogDescription></DialogHeader><div className="grid gap-4 py-5 sm:grid-cols-2"><Field label="Navn på cup" htmlFor="cup-name" className="sm:col-span-2"><Input id="cup-name" required value={name} onChange={(event) => setName(event.target.value)} placeholder="Eksempel: Nordkraftcupen 2027" /></Field><Field label="Fra dato" htmlFor="cup-start"><Input id="cup-start" required type="date" value={startDate} onChange={(event) => { setStartDate(event.target.value); if (!endDate) setEndDate(event.target.value); }} /></Field><Field label="Til dato" htmlFor="cup-end"><Input id="cup-end" required min={startDate} type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></Field><Field label="Sted" htmlFor="cup-venue"><Input id="cup-venue" value={venue} onChange={(event) => setVenue(event.target.value)} placeholder="Hall eller sted" /></Field><Field label="Antall lag" htmlFor="cup-teams"><Input id="cup-teams" min="1" max="6" type="number" inputMode="numeric" value={teamCount} onChange={(event) => setTeamCount(Math.min(6, Math.max(1, Number(event.target.value) || 1)))} /></Field><Field label="Minutter per omgang" htmlFor="cup-period"><Input id="cup-period" min="1" max="60" type="number" inputMode="numeric" value={periodMinutes} onChange={(event) => setPeriodMinutes(Number(event.target.value) || 18)} /></Field><div className="mt-4 flex items-end text-sm text-muted-foreground">Kampene settes opp med 2 omganger.</div></div><DialogFooter><Button disabled={saving || !name.trim() || !startDate || !endDate} type="submit">{saving ? "Lagrer …" : cup ? "Lagre endringer" : "Opprett cup"}</Button></DialogFooter></form></DialogContent></Dialog>;
+}
+
+function CupWorkspaceDialog({ open, saving, isAdmin, cup, data, canRecordMatch, onOpenChange, onEditCup, onAddMatch, onEditMatch, onOpenMatch, onDeleteMatch, onStatus, onSaveRosters, onDeleteCup }: { open: boolean; saving: boolean; isAdmin: boolean; cup: Cup; data: SeasonData; canRecordMatch: (matchId: number) => boolean; onOpenChange: (open: boolean) => void; onEditCup: (cup: Cup) => void; onAddMatch: (cup: Cup, team: CupTeam) => void; onEditMatch: (match: Match) => void; onOpenMatch: (id: number) => void; onDeleteMatch: (id: number) => Promise<boolean>; onStatus: (id: number, status: "planned" | "cancelled") => Promise<boolean>; onSaveRosters: (assignments: Array<{ playerId: number; cupTeamId: number }>) => Promise<boolean>; onDeleteCup: () => Promise<void> }) {
+  const teams = data.cupTeams.filter((team) => team.cupId === cup.id).sort((a, b) => a.sortOrder - b.sortOrder);
+  const initialAssignments = Object.fromEntries(data.cupTeamPlayers.filter((entry) => entry.cupId === cup.id).map((entry) => [entry.playerId, entry.cupTeamId]));
+  const [assignments, setAssignments] = useState<Record<number, number>>(initialAssignments);
+  const links = data.cupMatchLinks.filter((link) => link.cupId === cup.id);
+  const cupMatches = data.matches.filter((match) => links.some((link) => link.matchId === match.id));
+  const actions: MatchListActions = { data, onEdit: onEditMatch, onOpen: onOpenMatch, onDelete: onDeleteMatch, onStatus, isAdmin, canRecordMatch };
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[94dvh] overflow-y-auto sm:max-w-5xl"><DialogHeader><DialogTitle>{cup.name}</DialogTitle><DialogDescription>{formatCupDates(cup)}{cup.venue ? ` · ${cup.venue}` : ""} · 2 × {cup.periodMinutes} min</DialogDescription></DialogHeader>{isAdmin && <><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => onEditCup(cup)}><Pencil /> Rediger cup</Button><AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="ghost" className="text-destructive"><Trash2 /> Slett cup</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Slett {cup.name}?</AlertDialogTitle><AlertDialogDescription>Cupen, lagene og alle kampene som er lagt inn under cupen slettes. Dette kan ikke angres.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Avbryt</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => void onDeleteCup()}>Slett cup</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
+    <section className="mt-5 rounded-2xl border bg-slate-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-black">Fordel spillerne på lag</h3><p className="mt-1 text-sm text-muted-foreground">Hver spiller kan tilhøre ett lag i denne cupen. Dette blir standard laguttak når kampene legges inn.</p></div><Button size="sm" disabled={saving} onClick={() => void onSaveRosters(Object.entries(assignments).filter(([, teamId]) => teamId).map(([playerId, cupTeamId]) => ({ playerId: Number(playerId), cupTeamId })))}>{saving ? "Lagrer …" : "Lagre lagfordeling"}</Button></div><div className="mt-4 grid gap-2 sm:grid-cols-2">{data.players.filter((player) => Boolean(player.active)).map((player) => <div key={player.id} className="grid grid-cols-[1fr_130px] items-center gap-2 rounded-xl border bg-white p-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">{player.jerseyNumber ? `#${player.jerseyNumber} · ` : ""}{player.name}</p><p className="truncate text-xs text-muted-foreground">{guardianNames(player.id, data)}</p></div><Select value={assignments[player.id] ? String(assignments[player.id]) : "none"} onValueChange={(value) => setAssignments((current) => { const next = { ...current }; if (value === "none") delete next[player.id]; else next[player.id] = Number(value); return next; })}><SelectTrigger aria-label={`Velg cuplag for ${player.name}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Ikke med</SelectItem>{teams.map((team) => <SelectItem key={team.id} value={String(team.id)}>{team.name}</SelectItem>)}</SelectContent></Select></div>)}</div></section></>}
+    <section className="mt-5"><h3 className="text-lg font-black">Lag og kamper</h3><div className="mt-3 space-y-5">{teams.map((team) => { const teamPlayers = data.cupTeamPlayers.filter((entry) => entry.cupTeamId === team.id).map((entry) => data.players.find((player) => player.id === entry.playerId)).filter(Boolean) as Player[]; const teamMatchIds = new Set(links.filter((link) => link.cupTeamId === team.id).map((link) => link.matchId)); const teamMatches = cupMatches.filter((match) => teamMatchIds.has(match.id)); return <div key={team.id} className="rounded-2xl border p-3 sm:p-4"><div className="mb-3 flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-black">{team.name}</h4><p className="mt-1 text-sm text-muted-foreground">{teamPlayers.length ? teamPlayers.map((player) => shortPlayerName(player.name)).join(", ") : "Ingen spillere valgt ennå"}</p></div>{isAdmin && <Button size="sm" disabled={!teamPlayers.length} onClick={() => onAddMatch(cup, team)}><Plus /> Legg til kamp</Button>}</div><MatchGrid matches={teamMatches} emptyText="Ingen kamper lagt inn for laget ennå." {...actions} /></div>; })}</div></section>
+  </DialogContent></Dialog>;
+}
+
+function MatchFormDialog({ open, saving, match, matches, players: allPlayers, matchPlayers, users, matchRegistrars, cupContext, cupMatchLinks, cups, cupTeams, cupTeamPlayers, playerGuardians, onOpenChange, onSave }: { open: boolean; saving: boolean; match: Match | null; matches: Match[]; players: Player[]; matchPlayers: MatchPlayer[]; users: AppUser[]; matchRegistrars: MatchRegistrar[]; cupContext: { cup: Cup; team: CupTeam } | null; cupMatchLinks: CupMatchLink[]; cups: Cup[]; cupTeams: CupTeam[]; cupTeamPlayers: CupTeamPlayer[]; playerGuardians: PlayerGuardian[]; onOpenChange: (open: boolean) => void; onSave: (payload: Record<string, unknown>) => Promise<void> }) {
+  const matchCupLink = match ? cupMatchLinks.find((link) => link.matchId === match.id) ?? null : null;
+  const linkedCup = cupContext?.cup ?? cups.find((cup) => cup.id === matchCupLink?.cupId) ?? null;
+  const linkedTeam = cupContext?.team ?? cupTeams.find((team) => team.id === matchCupLink?.cupTeamId) ?? null;
+  const [date, setDate] = useState(match?.date ?? linkedCup?.startDate ?? "");
   const [startTime, setStartTime] = useState(match?.startTime ?? "");
   const [opponent, setOpponent] = useState(match?.opponent ?? "");
-  const [team, setTeam] = useState(match?.team ?? "Stokmarknes");
+  const [team, setTeam] = useState(match?.team ?? linkedTeam?.name ?? "Stokmarknes");
   const [homeAway, setHomeAway] = useState<"home" | "away">(match?.homeAway ?? "home");
-  const [matchType, setMatchType] = useState<MatchType>(match?.matchType ?? "league");
+  const [matchType, setMatchType] = useState<MatchType>(linkedCup ? "cup" : match?.matchType ?? "league");
   const [competition, setCompetition] = useState(match?.matchType === "league" ? match.competition : "J12-serien 2026/27");
-  const [cupName, setCupName] = useState(match?.cupName ?? (match?.matchType === "cup" ? match.competition : ""));
-  const [periodMinutes, setPeriodMinutes] = useState(match?.periodMinutes ?? 20);
-  const [venue, setVenue] = useState(match?.venue ?? "");
+  const [cupName, setCupName] = useState(linkedCup?.name ?? match?.cupName ?? (match?.matchType === "cup" ? match.competition : ""));
+  const [periodMinutes, setPeriodMinutes] = useState(match?.periodMinutes ?? linkedCup?.periodMinutes ?? 20);
+  const [venue, setVenue] = useState(match?.venue ?? linkedCup?.venue ?? "");
   const [registrarUserId, setRegistrarUserId] = useState(() => match ? matchRegistrars.find((entry) => entry.matchId === match.id)?.userId ?? 0 : 0);
   const [positionMenuPlayerId, setPositionMenuPlayerId] = useState<number | null>(null);
   const [roster, setRoster] = useState<RosterEntry[]>(() => {
-    if (!match) return [];
+    if (!match) return linkedTeam ? cupTeamPlayers.filter((entry) => entry.cupTeamId === linkedTeam.id).map((entry) => ({ playerId: entry.playerId, starter: false, goalkeeper: false, captain: false, position: "bench" as Position })) : [];
     const entries = matchPlayers.filter((entry) => entry.matchId === match.id);
     const positions = normalizeMatchPositions(entries);
     return entries.map((entry) => {
@@ -780,22 +879,25 @@ function MatchFormDialog({ open, saving, match, matches, players, matchPlayers, 
   function chooseCaptain(playerId: number) {
     setRoster((current) => current.map((entry) => ({ ...entry, captain: entry.playerId === playerId ? !entry.captain : false })));
   }
-  const registrars = users.filter((user) => user.role === "parent" && Boolean(user.active)).sort((a, b) => a.name.localeCompare(b.name, "nb-NO"));
+  const availablePlayerIds = new Set(linkedTeam ? cupTeamPlayers.filter((entry) => entry.cupTeamId === linkedTeam.id).map((entry) => entry.playerId) : allPlayers.map((player) => player.id));
+  const eligibleGuardianIds = new Set(playerGuardians.filter((entry) => availablePlayerIds.has(entry.playerId)).map((entry) => entry.userId));
+  const registrars = users.filter((user) => user.role === "parent" && Boolean(user.active) && (!linkedTeam || eligibleGuardianIds.has(user.id))).sort((a, b) => a.name.localeCompare(b.name, "nb-NO"));
+  const players = linkedTeam ? allPlayers.filter((player) => availablePlayerIds.has(player.id)) : allPlayers;
   const cupNames = [...new Set(matches.filter((item) => item.matchType === "cup").map((item) => item.cupName || item.competition).filter(Boolean))];
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl"><form onSubmit={(event) => { event.preventDefault(); void onSave({ id: match?.id, date, startTime, opponent, team, homeAway, competition, matchType, cupName, periodCount: 2, periodMinutes: matchType === "league" ? 20 : periodMinutes, venue, ourScore: match?.ourScore ?? null, opponentScore: match?.opponentScore ?? null, notes: match?.notes ?? "", roster, registrarUserId: registrarUserId || null }); }}>
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl"><form onSubmit={(event) => { event.preventDefault(); void onSave({ id: match?.id, cupId: linkedCup?.id, cupTeamId: linkedTeam?.id, date, startTime, opponent, team, homeAway, competition, matchType, cupName, periodCount: 2, periodMinutes: matchType === "league" ? 20 : periodMinutes, venue, ourScore: match?.ourScore ?? null, opponentScore: match?.opponentScore ?? null, notes: match?.notes ?? "", roster, registrarUserId: registrarUserId || null }); }}>
     <DialogHeader><DialogTitle>{match ? "Rediger kamp" : "Ny kamp"}</DialogTitle><DialogDescription>Legg inn kampinformasjon og velg spillerne som skal delta.</DialogDescription></DialogHeader>
     <div className="grid gap-4 py-5 sm:grid-cols-2">
-      <Field label="Kamptype" htmlFor="match-type" className="sm:col-span-2"><Select value={matchType} onValueChange={(value) => setMatchType(value as MatchType)}><SelectTrigger id="match-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="league">Seriekamp</SelectItem><SelectItem value="cup">Cupkamp</SelectItem><SelectItem value="friendly">Vennskapskamp</SelectItem></SelectContent></Select></Field>
+      <Field label="Kamptype" htmlFor="match-type" className="sm:col-span-2"><Select disabled={Boolean(linkedCup)} value={matchType} onValueChange={(value) => setMatchType(value as MatchType)}><SelectTrigger id="match-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="league">Seriekamp</SelectItem>{(Boolean(linkedCup) || match?.matchType === "cup") && <SelectItem value="cup">Cupkamp</SelectItem>}<SelectItem value="friendly">Vennskapskamp</SelectItem></SelectContent></Select>{!linkedCup && !match && <p className="mt-2 text-xs text-muted-foreground">Cupkamper legges inn ved å opprette og åpne cupen i Cup-fanen.</p>}</Field>
       <Field label="Dato" htmlFor="match-date"><Input id="match-date" required type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
       <Field label="Starttid" htmlFor="match-time"><Input id="match-time" type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} /></Field>
-      <Field label="Vårt lag" htmlFor="match-team"><Input id="match-team" value={team} onChange={(event) => setTeam(event.target.value)} placeholder="STHK 2" /></Field>
+      <Field label="Vårt lag" htmlFor="match-team"><Input id="match-team" disabled={Boolean(linkedTeam)} value={team} onChange={(event) => setTeam(event.target.value)} placeholder="STHK 2" /></Field>
       <Field label="Motstander" htmlFor="match-opponent"><Input id="match-opponent" required value={opponent} onChange={(event) => setOpponent(event.target.value)} /></Field>
       <Field label="Hjemme eller borte" htmlFor="match-home-away"><Select value={homeAway} onValueChange={(value) => setHomeAway(value as "home" | "away")}><SelectTrigger id="match-home-away"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="home">Hjemmekamp</SelectItem><SelectItem value="away">Bortekamp</SelectItem></SelectContent></Select></Field>
       <Field label="Sted" htmlFor="match-venue"><Input id="match-venue" value={venue} onChange={(event) => setVenue(event.target.value)} placeholder="Hall" /></Field>
       {matchType === "league" && <Field label="Serie" htmlFor="match-competition"><Input id="match-competition" value={competition} onChange={(event) => setCompetition(event.target.value)} /></Field>}
-      {matchType === "cup" && <Field label="Navn på cup" htmlFor="match-cup"><Input id="match-cup" list="cup-names" required value={cupName} onChange={(event) => setCupName(event.target.value)} placeholder="Eksempel: Vågan Cup" /><datalist id="cup-names">{cupNames.map((cup) => <option key={cup} value={cup} />)}</datalist></Field>}
-      <Field label="Spilletid" htmlFor="match-period-minutes"><div className="flex items-center gap-2"><Input id="match-period-minutes" disabled={matchType === "league"} min="1" max="60" type="number" inputMode="numeric" value={matchType === "league" ? 20 : periodMinutes} onChange={(event) => setPeriodMinutes(Number(event.target.value) || 20)} /><span className="shrink-0 text-sm text-muted-foreground">2 omganger</span></div>{matchType === "league" && <p className="mt-2 text-xs text-muted-foreground">J12-serien bruker 2 × 20 minutter.</p>}</Field>
-      <Field label="Kampregistrator" htmlFor="match-registrar" className="sm:col-span-2"><Select value={registrarUserId ? String(registrarUserId) : "none"} onValueChange={(value) => setRegistrarUserId(value === "none" ? 0 : Number(value))}><SelectTrigger id="match-registrar"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Ingen valgt</SelectItem>{registrars.map((user) => <SelectItem key={user.id} value={String(user.id)}>{user.name}</SelectItem>)}</SelectContent></Select><p className="mt-2 text-xs text-muted-foreground">Velg blant aktive foresatte. Valgt person får registreringstilgang bare til denne kampen. Administratorer har alltid tilgang.</p></Field>
+      {matchType === "cup" && <Field label="Navn på cup" htmlFor="match-cup"><Input id="match-cup" disabled={Boolean(linkedCup)} list="cup-names" required value={cupName} onChange={(event) => setCupName(event.target.value)} placeholder="Eksempel: Vågan Cup" /><datalist id="cup-names">{cupNames.map((cup) => <option key={cup} value={cup} />)}</datalist></Field>}
+      <Field label="Spilletid" htmlFor="match-period-minutes"><div className="flex items-center gap-2"><Input id="match-period-minutes" disabled={matchType === "league" || Boolean(linkedCup)} min="1" max="60" type="number" inputMode="numeric" value={matchType === "league" ? 20 : periodMinutes} onChange={(event) => setPeriodMinutes(Number(event.target.value) || 20)} /><span className="shrink-0 text-sm text-muted-foreground">2 omganger</span></div>{matchType === "league" && <p className="mt-2 text-xs text-muted-foreground">J12-serien bruker 2 × 20 minutter.</p>}{linkedCup && <p className="mt-2 text-xs text-muted-foreground">Spilletiden styres av cupoppsettet.</p>}</Field>
+      <Field label="Kampregistrator" htmlFor="match-registrar" className="sm:col-span-2"><Select value={registrarUserId ? String(registrarUserId) : "none"} onValueChange={(value) => setRegistrarUserId(value === "none" ? 0 : Number(value))}><SelectTrigger id="match-registrar"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Ingen valgt</SelectItem>{registrars.map((user) => <SelectItem key={user.id} value={String(user.id)}>{user.name}</SelectItem>)}</SelectContent></Select><p className="mt-2 text-xs text-muted-foreground">{linkedTeam ? "Listen viser foresatte til spillerne på dette cuplaget." : "Velg blant aktive foresatte."} Valgt person får registreringstilgang bare til denne kampen. Administratorer har alltid tilgang.</p></Field>
       <div className="sm:col-span-2"><div className="mb-1 flex items-center justify-between"><p className="text-sm font-semibold">Laguttak, startposisjon og kaptein</p><span className="text-xs text-muted-foreground">{roster.length} valgt</span></div><p className="mb-3 text-sm text-muted-foreground">Trykk på spilleren for å velge plass. Kronen markerer kampens kaptein.</p><div className="overflow-hidden rounded-2xl border"><div className="grid grid-cols-[40px_1fr] bg-slate-50 px-3 py-2 text-xs font-semibold text-muted-foreground"><span>Med</span><span className="grid grid-cols-[1fr_104px_48px] gap-2"><span>Spiller</span><span className="text-center">Startplass</span><span className="text-center">C</span></span></div>{players.length === 0 ? <p className="p-4 text-sm text-muted-foreground">Legg inn spillere i spillerregisteret først.</p> : players.map((player) => { const entry = roster.find((item) => item.playerId === player.id); const positionLabel = positionOptions.find((option) => option.value === entry?.position)?.label ?? "Velg plass"; return <div key={player.id} className={`grid min-h-14 grid-cols-[40px_1fr] items-center border-t px-3 ${entry ? "bg-red-50/40" : "bg-white"}`}><div className="grid place-items-start"><Checkbox aria-label={`${player.name} er med i laguttaket`} checked={Boolean(entry)} onCheckedChange={(checked) => selectPlayer(player.id, checked === true)} /></div><div className="grid min-w-0 grid-cols-[1fr_104px_48px] items-center gap-2"><Popover open={positionMenuPlayerId === player.id} onOpenChange={(isOpen) => setPositionMenuPlayerId(isOpen ? player.id : null)}><PopoverTrigger asChild><button type="button" className="col-span-2 grid min-h-14 min-w-0 grid-cols-[1fr_104px] items-center gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50" disabled={!entry}><span className="flex min-w-0 items-center gap-2"><span className="w-8 shrink-0 text-xs font-black text-primary">{player.jerseyNumber ? `#${player.jerseyNumber}` : ""}</span><span className="truncate text-sm font-semibold">{player.name}</span></span><span className={`rounded-lg px-1.5 py-1.5 text-center text-xs font-bold ${entry?.position === "bench" ? "bg-slate-100 text-slate-700" : entry ? "bg-primary text-primary-foreground" : "bg-slate-50 text-muted-foreground"}`}>{positionLabel}</span></button></PopoverTrigger><PopoverContent className="z-[60] w-72" align="end"><PopoverHeader><PopoverTitle>{player.name}</PopoverTitle><PopoverDescription>Velg startposisjon eller benk.</PopoverDescription></PopoverHeader><div className="mt-3 grid grid-cols-2 gap-2">{positionOptions.map((option) => <button key={option.value} type="button" onClick={() => choosePosition(player.id, option.value)} className={`min-h-11 rounded-xl border px-2 py-2 text-sm font-semibold ${entry?.position === option.value ? "border-primary bg-primary text-primary-foreground" : "bg-white hover:border-primary"}`}>{option.label}</button>)}</div></PopoverContent></Popover><button type="button" aria-label={entry?.captain ? `${player.name} er kaptein` : `Velg ${player.name} som kaptein`} disabled={!entry} onClick={() => chooseCaptain(player.id)} className={`grid size-10 place-items-center rounded-xl border transition disabled:opacity-30 ${entry?.captain ? "border-amber-500 bg-amber-100 text-amber-900" : "bg-white text-slate-400 hover:border-amber-400"}`}><Crown className="size-5" /></button></div></div>; })}</div></div>
     </div>
     <DialogFooter><Button disabled={saving || !date || !opponent.trim() || (matchType === "cup" && !cupName.trim())} type="submit">{saving ? "Lagrer …" : "Lagre kamp"}</Button></DialogFooter>
@@ -861,6 +963,25 @@ function displayScore(match: Match) {
 function formatDate(value: string) {
   if (!value) return "Dato ikke satt";
   return new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${value}T12:00:00`));
+}
+
+function formatCupDates(cup: Cup) {
+  if (cup.startDate === cup.endDate) return formatDate(cup.startDate);
+  return `${formatDate(cup.startDate)}–${formatDate(cup.endDate)}`;
+}
+
+function guardianNames(playerId: number, data: SeasonData) {
+  return data.playerGuardians
+    .filter((entry) => entry.playerId === playerId)
+    .map((entry) => data.appUsers.find((user) => user.id === entry.userId)?.name)
+    .filter(Boolean)
+    .join(" og ");
+}
+
+function shortPlayerName(name: string) {
+  if (name === "Martine Eilertsen") return "Martine E";
+  if (name === "Martine Sørensen") return "Martine R";
+  return name.split(" ")[0];
 }
 
 function formatLoginDateTime(value: string) {

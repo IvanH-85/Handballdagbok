@@ -101,6 +101,10 @@ export async function fetchSnapshot<T>(accessToken: string): Promise<T> {
   return jsonRequest("/rest/v1/rpc/season_snapshot", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
 }
 
+export async function fetchCupSnapshot<T>(accessToken: string): Promise<T> {
+  return jsonRequest("/rest/v1/rpc/cup_snapshot", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
+}
+
 export async function fetchLiveMatch<T>(accessToken: string, matchId: number): Promise<T> {
   return jsonRequest("/rest/v1/rpc/live_match_snapshot", {
     method: "POST", body: JSON.stringify({ match_id_input: matchId }),
@@ -116,7 +120,8 @@ export async function fetchTrainingObservations<T>(accessToken: string): Promise
 }
 
 export async function applyAction(accessToken: string, payload: Record<string, unknown>) {
-  const rpcName = payload.action === "saveTrainingObservation" ? "save_training_observation" : "season_action";
+  const cupActions = new Set(["saveCup", "saveCupRosters", "saveCupMatch", "deleteCup"]);
+  const rpcName = payload.action === "saveTrainingObservation" ? "save_training_observation" : cupActions.has(String(payload.action)) ? "cup_action" : "season_action";
   return jsonRequest(`/rest/v1/rpc/${rpcName}`, {
     method: "POST", body: JSON.stringify({ payload }),
   }, accessToken);
