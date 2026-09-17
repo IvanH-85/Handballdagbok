@@ -193,12 +193,15 @@ function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStat
   if (loading) return <LoadingCards />;
   if (!data.trainings.length) return <EmptyTraining onAdd={onAdd} />;
   const currentMonth = monthKey(new Date());
-  const monthGroups = groupTrainingsByMonth(data.trainings, currentMonth);
-  const initiallyOpen = monthGroups.find((group) => group.key === currentMonth)?.key ?? monthGroups[0]?.key;
+  const planned = data.trainings.filter((training) => training.status === "planned");
+  const completed = data.trainings.filter((training) => training.status === "completed").sort((a, b) => `${b.date}|${b.startTime}`.localeCompare(`${a.date}|${a.startTime}`));
+  const cancelled = data.trainings.filter((training) => training.status === "cancelled").sort((a, b) => `${b.date}|${b.startTime}`.localeCompare(`${a.date}|${a.startTime}`));
+  const plannedMonths = groupTrainingsByMonth(planned);
+  const cardActions = { data, onEdit, onFocus, onDelete, onStatus };
 
   return <div className="space-y-4">
-    <Accordion type="multiple" defaultValue={initiallyOpen ? [initiallyOpen] : []} className="space-y-3">
-    {monthGroups.map((group) => <AccordionItem key={group.key} value={group.key} className="overflow-hidden rounded-2xl border bg-white">
+    <Accordion key={plannedMonths[0]?.key ?? "no-plans"} type="multiple" defaultValue={plannedMonths[0] ? [plannedMonths[0].key] : []} className="space-y-3">
+    {plannedMonths.map((group) => <AccordionItem key={group.key} value={group.key} className="overflow-hidden rounded-2xl border bg-white">
       <AccordionTrigger className="min-h-16 bg-slate-50/80 px-4 py-3 hover:no-underline">
         <span className="flex min-w-0 flex-1 items-center justify-between gap-3 pr-2">
           <span className="text-base font-bold capitalize">{formatMonth(group.key)}</span>
@@ -210,11 +213,14 @@ function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStat
       </AccordionTrigger>
       <AccordionContent className="p-3 pt-3">
         <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))" }}>
-          {group.trainings.map((training) => <TrainingCard key={training.id} training={training} data={data} onEdit={onEdit} onFocus={onFocus} onDelete={onDelete} onStatus={onStatus} />)}
+          {group.trainings.map((training) => <TrainingCard key={training.id} training={training} {...cardActions} />)}
         </div>
       </AccordionContent>
     </AccordionItem>)}
     </Accordion>
+    {!planned.length && <p className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">Ingen kommende treninger er planlagt.</p>}
+    {completed.length > 0 && <section className="space-y-3"><h3 className="px-1 text-lg font-bold">Gjennomførte treninger</h3><div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))" }}>{completed.map((training) => <TrainingCard key={training.id} training={training} {...cardActions} />)}</div></section>}
+    {cancelled.length > 0 && <Accordion type="single" collapsible className="rounded-2xl border"><AccordionItem value="cancelled" className="border-0"><AccordionTrigger className="px-4">Avlyste treninger ({cancelled.length})</AccordionTrigger><AccordionContent className="grid gap-3 p-3 pt-0" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))" }}>{cancelled.map((training) => <TrainingCard key={training.id} training={training} {...cardActions} />)}</AccordionContent></AccordionItem></Accordion>}
   </div>;
 }
 
@@ -481,21 +487,25 @@ function formatMonth(value: string) {
   return new Intl.DateTimeFormat("nb-NO", { month: "long", year: "numeric" }).format(new Date(`${value}-01T12:00:00`));
 }
 
-function groupTrainingsByMonth(trainings: Training[], currentMonth: string) {
+function groupTrainingsByMonth(trainings: Training[]) {
   const groups = new Map<string, Training[]>();
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Oslo" });
   for (const training of trainings) {
     const key = training.date.slice(0, 7);
     groups.set(key, [...(groups.get(key) ?? []), training]);
   }
 
   return [...groups.entries()]
-    .map(([key, entries]) => ({ key, trainings: entries.sort((a, b) => `${b.date}|${b.startTime}`.localeCompare(`${a.date}|${a.startTime}`)) }))
+    .map(([key, entries]) => ({ key, trainings: entries.sort((a, b) => {
+      const aUpcoming = a.date >= today;
+      const bUpcoming = b.date >= today;
+      if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+      return `${a.date}|${a.startTime}`.localeCompare(`${b.date}|${b.startTime}`);
+    }) }))
     .sort((a, b) => {
-      if (a.key === currentMonth) return -1;
-      if (b.key === currentMonth) return 1;
-      const aIsFuture = a.key > currentMonth;
-      const bIsFuture = b.key > currentMonth;
-      if (aIsFuture !== bIsFuture) return aIsFuture ? 1 : -1;
-      return aIsFuture ? a.key.localeCompare(b.key) : b.key.localeCompare(a.key);
+      const aUpcoming = a.trainings.some((training) => training.date >= today);
+      const bUpcoming = b.trainings.some((training) => training.date >= today);
+      if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+      return aUpcoming ? a.key.localeCompare(b.key) : b.key.localeCompare(a.key);
     });
 }
