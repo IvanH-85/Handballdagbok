@@ -212,9 +212,18 @@ function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStat
         {group.trainings.some((training) => training.status === "planned") && <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))" }}>
           {group.trainings.filter((training) => training.status === "planned").map((training) => <TrainingCard key={training.id} training={training} {...cardActions} />)}
         </div>}
-        {group.trainings.some((training) => training.status === "completed") && <div className="mt-4 border-t pt-4 first:mt-0 first:border-0 first:pt-0"><h3 className="mb-3 text-sm font-bold text-muted-foreground">Gjennomførte treninger</h3><div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))" }}>
-          {group.trainings.filter((training) => training.status === "completed").map((training) => <TrainingCard key={training.id} training={training} {...cardActions} />)}
-        </div></div>}
+        {group.trainings.some((training) => training.status === "completed") && <Accordion type="single" collapsible className="mt-4 first:mt-0">
+          <AccordionItem value="past" className="overflow-hidden rounded-xl border bg-slate-50/80">
+            <AccordionTrigger className="px-4 py-3 hover:no-underline">
+              <span className="flex items-center gap-2 font-semibold">Tidligere treninger <Badge variant="secondary">{group.trainings.filter((training) => training.status === "completed").length}</Badge></span>
+            </AccordionTrigger>
+            <AccordionContent className="px-3 pb-3">
+              <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))" }}>
+                {group.trainings.filter((training) => training.status === "completed").map((training) => <TrainingCard key={training.id} training={training} {...cardActions} />)}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>}
         {group.trainings.some((training) => training.status === "cancelled") && <div className="mt-4 border-t pt-4"><h3 className="mb-3 text-sm font-bold text-muted-foreground">Avlyste treninger</h3><div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))" }}>
           {group.trainings.filter((training) => training.status === "cancelled").map((training) => <TrainingCard key={training.id} training={training} {...cardActions} />)}
         </div></div>}
