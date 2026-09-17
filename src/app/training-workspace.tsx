@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   ArrowDown,
   ArrowUp,
   Clock3,
   CheckCircle2,
+  ChevronDown,
   Dumbbell,
   ExternalLink,
   Flame,
@@ -218,17 +219,23 @@ function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStat
 }
 
 function TrainingCard({ training, data, onEdit, onFocus, onDelete, onStatus }: { training: Training; data: TrainingData; onEdit: (training: Training) => void; onFocus: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean> }) {
+  const [expanded, setExpanded] = useState(training.status !== "completed");
+  useEffect(() => {
+    setExpanded(training.status !== "completed");
+  }, [training.status]);
   const items = data.trainingExercises.filter((item) => item.trainingId === training.id);
   const plannedMinutes = items.reduce((sum, item) => sum + item.durationMinutes, 0);
   const attendanceCount = data.attendance.filter((entry) => entry.trainingId === training.id).length;
   return <article className="overflow-hidden rounded-2xl border bg-white">
-      <div className="border-b bg-slate-50/70 p-4">
+      <div className={`${expanded ? "border-b" : ""} bg-slate-50/70 p-4`}>
         <div className="flex items-start justify-between gap-3">
           <div><p className="text-xs font-semibold text-primary">{formatDate(training.date)}</p><h3 className="mt-1 text-lg font-bold">{training.title || "Lagstrening"}</h3>{training.theme && <Badge className="mt-2" variant="outline">{training.theme}</Badge>}</div>
-          <div className="flex flex-col items-end gap-2"><TrainingStatusBadge status={training.status} /><Badge variant="secondary">{plannedMinutes || training.durationMinutes} min</Badge></div>
+          <div className="flex shrink-0 flex-col items-end gap-2"><TrainingStatusBadge status={training.status} />{expanded && <Badge variant="secondary">{plannedMinutes || training.durationMinutes} min</Badge>}</div>
         </div>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span className="flex items-center gap-1"><Clock3 className="size-3.5" />{training.startTime || "Tid ikke satt"}</span><span className="flex items-center gap-1"><Users className="size-3.5" />{attendanceCount} spillere</span></div>
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground"><span className="flex items-center gap-1"><Clock3 className="size-3.5" />{training.startTime || "Tid ikke satt"}</span><span className="flex items-center gap-1"><Users className="size-3.5" />{attendanceCount} spillere</span>{!expanded && <span>{plannedMinutes || training.durationMinutes} min</span>}</div>
+        {training.status === "completed" && <button type="button" aria-expanded={expanded} aria-controls={`training-details-${training.id}`} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border bg-white text-sm font-semibold text-primary hover:bg-red-50" onClick={() => setExpanded((current) => !current)}>{expanded ? "Lukk trening" : "Åpne trening"}<ChevronDown className={`size-4 transition-transform ${expanded ? "rotate-180" : ""}`} /></button>}
       </div>
+      <div id={`training-details-${training.id}`} hidden={!expanded}>
       <div className="space-y-3 p-4">
         {sections.map((section) => {
           const meta = sectionMeta[section];
@@ -237,6 +244,7 @@ function TrainingCard({ training, data, onEdit, onFocus, onDelete, onStatus }: {
         })}
       </div>
       <div className="flex flex-wrap gap-2 border-t p-3"><Button className="min-h-11 flex-1" variant="outline" onClick={() => onEdit(training)}><Pencil /> {training.status === "planned" ? "Åpne planen" : "Se trening"}</Button>{training.status !== "cancelled" && <Button className="min-h-11 flex-1 bg-amber-400 text-amber-950 hover:bg-amber-500" onClick={() => onFocus(training)}><Sparkles /> Treningsblikk</Button>}{training.status === "planned" ? <><Button className="min-h-11" onClick={() => void onStatus(training.id, "completed")}><CheckCircle2 /> Gjennomført</Button><Button className="min-h-11" variant="ghost" onClick={() => void onStatus(training.id, "cancelled")}>Avlys</Button><DeleteButton label="Slett trening" description="Treningen, øvelsesplanen og oppmøtet blir slettet." onConfirm={() => void onDelete(training.id)} /></> : <Button className="min-h-11" variant="outline" onClick={() => void onStatus(training.id, "planned")}>Åpne igjen</Button>}</div>
+      </div>
     </article>;
 }
 
@@ -481,7 +489,7 @@ function groupTrainingsByMonth(trainings: Training[], currentMonth: string) {
   }
 
   return [...groups.entries()]
-    .map(([key, entries]) => ({ key, trainings: entries.sort((a, b) => `${a.date}|${a.startTime}`.localeCompare(`${b.date}|${b.startTime}`)) }))
+    .map(([key, entries]) => ({ key, trainings: entries.sort((a, b) => `${b.date}|${b.startTime}`.localeCompare(`${a.date}|${a.startTime}`)) }))
     .sort((a, b) => {
       if (a.key === currentMonth) return -1;
       if (b.key === currentMonth) return 1;
