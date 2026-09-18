@@ -154,6 +154,7 @@ export function SeasonApp() {
   const [cupFormOpen, setCupFormOpen] = useState(false);
   const [editingCup, setEditingCup] = useState<Cup | null>(null);
   const [activeCupId, setActiveCupId] = useState<number | null>(null);
+  const [returnToCupId, setReturnToCupId] = useState<number | null>(null);
   const [cupMatchContext, setCupMatchContext] = useState<{ cup: Cup; team: CupTeam } | null>(null);
   const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState<number | null>(null);
@@ -388,8 +389,8 @@ export function SeasonApp() {
             <MatchSection
               data={data}
               loading={loading}
-              onAdd={() => { setEditingMatch(null); setMatchFormOpen(true); }}
-              onEdit={(match) => { setEditingMatch(match); setMatchFormOpen(true); }}
+              onAdd={() => { setReturnToCupId(null); setEditingMatch(null); setMatchFormOpen(true); }}
+              onEdit={(match) => { setReturnToCupId(null); setEditingMatch(match); setMatchFormOpen(true); }}
               onOpen={setActiveMatchId}
               onDelete={(id) => runAction({ action: "deleteMatch", id }, "Kampen er slettet.")}
               onStatus={(id, status) => runAction({ action: "setMatchStatus", matchId: id, status }, status === "planned" ? "Kampen er åpnet igjen." : "Kampen er markert som avlyst.")}
@@ -439,11 +440,16 @@ export function SeasonApp() {
         cupTeams={data.cupTeams}
         cupTeamPlayers={data.cupTeamPlayers}
         playerGuardians={data.playerGuardians}
-        onOpenChange={setMatchFormOpen}
+        onOpenChange={(open) => { setMatchFormOpen(open); if (!open) { setCupMatchContext(null); setReturnToCupId(null); } }}
         onSave={async (payload) => {
           const action = !editingMatch && payload.cupId ? "saveCupMatch" : "saveMatch";
           const ok = await runAction({ action, ...payload }, editingMatch ? "Kampen er oppdatert." : "Kampen er lagt til.");
-          if (ok) { setMatchFormOpen(false); setCupMatchContext(null); }
+          if (ok) {
+            setMatchFormOpen(false);
+            setCupMatchContext(null);
+            if (returnToCupId) setActiveCupId(returnToCupId);
+            setReturnToCupId(null);
+          }
         }}
       />
       <CupFormDialog
@@ -468,8 +474,8 @@ export function SeasonApp() {
         canRecordMatch={canRecordMatch}
         onOpenChange={(open) => { if (!open) setActiveCupId(null); }}
         onEditCup={(cup) => { setEditingCup(cup); setCupFormOpen(true); }}
-        onAddMatch={(cup, team) => { setActiveCupId(null); setEditingMatch(null); setCupMatchContext({ cup, team }); setMatchFormOpen(true); }}
-        onEditMatch={(match) => { setActiveCupId(null); setEditingMatch(match); setCupMatchContext(null); setMatchFormOpen(true); }}
+        onAddMatch={(cup, team) => { setReturnToCupId(cup.id); setActiveCupId(null); setEditingMatch(null); setCupMatchContext({ cup, team }); setMatchFormOpen(true); }}
+        onEditMatch={(match) => { setReturnToCupId(activeCupId); setActiveCupId(null); setEditingMatch(match); setCupMatchContext(null); setMatchFormOpen(true); }}
         onOpenMatch={setActiveMatchId}
         onDeleteMatch={(id) => runAction({ action: "deleteMatch", id }, "Kampen er slettet.")}
         onStatus={(id, status) => runAction({ action: "setMatchStatus", matchId: id, status }, status === "planned" ? "Kampen er åpnet igjen." : "Kampen er markert som avlyst.")}
