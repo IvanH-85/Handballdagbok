@@ -111,6 +111,12 @@ export async function fetchLiveMatch<T>(accessToken: string, matchId: number): P
   }, accessToken) as Promise<T>;
 }
 
+export async function fetchMatchEnhancements<T>(accessToken: string, matchId: number | null = null): Promise<T> {
+  return jsonRequest("/rest/v1/rpc/match_enhancements_snapshot", {
+    method: "POST", body: JSON.stringify({ match_id_input: matchId }),
+  }, accessToken) as Promise<T>;
+}
+
 export async function fetchUserLoginActivity<T>(accessToken: string): Promise<T> {
   return jsonRequest("/rest/v1/rpc/user_login_activity", { method: "POST", body: "{}" }, accessToken) as Promise<T>;
 }
@@ -121,7 +127,8 @@ export async function fetchTrainingObservations<T>(accessToken: string): Promise
 
 export async function applyAction(accessToken: string, payload: Record<string, unknown>) {
   const cupActions = new Set(["saveCup", "saveCupRosters", "saveCupMatch", "deleteCup"]);
-  const rpcName = payload.action === "saveTrainingObservation" ? "save_training_observation" : cupActions.has(String(payload.action)) ? "cup_action" : "season_action";
+  const matchEnhancementActions = new Set(["setEventAnnulled", "swapKeeper", "addMatchComment", "deleteMatchComment"]);
+  const rpcName = payload.action === "saveTrainingObservation" ? "save_training_observation" : matchEnhancementActions.has(String(payload.action)) ? "match_enhancement_action" : cupActions.has(String(payload.action)) ? "cup_action" : "season_action";
   return jsonRequest(`/rest/v1/rpc/${rpcName}`, {
     method: "POST", body: JSON.stringify({ payload }),
   }, accessToken);
