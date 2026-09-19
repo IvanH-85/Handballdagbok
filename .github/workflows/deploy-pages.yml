@@ -3,7 +3,8 @@ name: Deploy GitHub Pages
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 6 * * 1"
+    # Oppdater morgen og kveld slik at helgens resultater kommer inn samme dag.
+    - cron: "0 5,19 * * *"
   push:
     branches: [main]
 
