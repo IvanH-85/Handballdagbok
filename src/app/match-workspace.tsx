@@ -90,6 +90,7 @@ export function MatchWorkspace({
   onEvent,
   onDeleteEvent,
   onSetEventAnnulled,
+  onChangeGoalScorer,
   onSubstitution,
   onSwapKeeper,
   onDeleteSubstitution,
@@ -112,6 +113,7 @@ export function MatchWorkspace({
   onEvent: (side: "ours" | "opponent", playerId: number | null, type: EventType, matchSecond: number, period: number, periodSecond: number) => Promise<boolean>;
   onDeleteEvent: (eventId: number) => Promise<boolean>;
   onSetEventAnnulled: (eventId: number, annulled: boolean) => Promise<boolean>;
+  onChangeGoalScorer: (eventId: number, playerId: number) => Promise<boolean>;
   onSubstitution: (playerInId: number, playerOutId: number, matchSecond: number, period: number, periodSecond: number) => Promise<boolean>;
   onSwapKeeper: (goalkeeperId: number, playerId: number, matchSecond: number, period: number, periodSecond: number) => Promise<boolean>;
   onDeleteSubstitution: (id: number) => Promise<boolean>;
@@ -125,6 +127,7 @@ export function MatchWorkspace({
   const [playerGoingOut, setPlayerGoingOut] = useState<{ playerId: number; reason: "two_min" | "red" } | null>(null);
   const [keeperChanging, setKeeperChanging] = useState<number | null>(null);
   const [selectedLoggedGoal, setSelectedLoggedGoal] = useState<MatchEvent | null>(null);
+  const [goalScorerChanging, setGoalScorerChanging] = useState<MatchEvent | null>(null);
   const [commentText, setCommentText] = useState("");
   const [notes, setNotes] = useState(match.notes);
   const [now, setNow] = useState(() => Date.now());
@@ -239,6 +242,14 @@ export function MatchWorkspace({
     if (!body) return;
     const ok = await onAddComment(body, visibility);
     if (ok) setCommentText("");
+  }
+
+  async function changeGoalScorer(playerId: number) {
+    if (!goalScorerChanging) return;
+    const eventId = goalScorerChanging.id;
+    setGoalScorerChanging(null);
+    const ok = await onChangeGoalScorer(eventId, playerId);
+    if (!ok) setGoalScorerChanging(goalScorerChanging);
   }
 
   function selectPlayer(player: Player) {
@@ -390,8 +401,19 @@ export function MatchWorkspace({
           </DialogHeader>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button disabled={saving || !selectedLoggedGoal} variant={selectedLoggedGoal?.annulled ? "outline" : "destructive"} onClick={() => { if (!selectedLoggedGoal) return; const selected = selectedLoggedGoal; setSelectedLoggedGoal(null); void onSetEventAnnulled(selected.id, !selected.annulled); }}>{selectedLoggedGoal?.annulled ? "Gjenopprett mål" : "Annuller mål"}</Button>
+            {selectedLoggedGoal?.side === "ours" && <Button disabled={saving} variant="outline" onClick={() => { setGoalScorerChanging(selectedLoggedGoal); setSelectedLoggedGoal(null); }}>Endre målscorer</Button>}
             <Button variant="outline" onClick={() => setSelectedLoggedGoal(null)}>Avbryt</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(goalScorerChanging)} onOpenChange={(isOpen) => { if (!isOpen) setGoalScorerChanging(null); }}>
+        <DialogContent className="z-[70] max-h-[88dvh] max-w-xl overflow-y-auto rounded-3xl">
+          <DialogHeader>
+            <DialogTitle>Velg riktig målscorer</DialogTitle>
+            <DialogDescription>Målet beholder samme tidspunkt og type.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 sm:grid-cols-2">{rosterPlayers.map((player) => <button key={player.id} type="button" disabled={saving || player.id === goalScorerChanging?.playerId} onClick={() => void changeGoalScorer(player.id)} className="rounded-xl border bg-white p-3 text-left transition hover:border-primary hover:bg-red-50/40 disabled:bg-slate-100 disabled:opacity-60"><span className="font-bold">{playerLabel(player)}</span>{player.id === goalScorerChanging?.playerId && <span className="ml-2 text-xs text-muted-foreground">Nåværende</span>}</button>)}</div>
         </DialogContent>
       </Dialog>
 
