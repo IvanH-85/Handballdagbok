@@ -24,7 +24,7 @@ export type SeriesTableData = {
 };
 
 export async function fetchSeriesTable(): Promise<SeriesTableData | null> {
-  const url = new URL(`${import.meta.env.BASE_URL}series-standings.json`, window.location.origin);
+  const url = new URL(`${import.meta.env.BASE_URL}series-standings.json`, document.baseURI);
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) return null;
   const data = await response.json() as Partial<SeriesTableData>;
