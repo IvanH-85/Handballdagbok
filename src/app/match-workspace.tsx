@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { calculatePositionStatistics, positionLabels } from "@/lib/match-position-stats";
 
 type Player = { id: number; name: string; jerseyNumber: number | null };
 type Match = {
@@ -97,6 +98,7 @@ export function MatchWorkspace({
   onAddComment,
   onDeleteComment,
   canRecord,
+  showPositionStats,
   onComplete,
 }: {
   open: boolean;
@@ -120,6 +122,7 @@ export function MatchWorkspace({
   onAddComment: (body: string, visibility: "public" | "internal") => Promise<boolean>;
   onDeleteComment: (id: number) => Promise<boolean>;
   canRecord: boolean;
+  showPositionStats: boolean;
   onComplete: (elapsedSeconds: number, periodElapsedSeconds: number) => Promise<boolean>;
 }) {
   const [selectedTarget, setSelectedTarget] = useState<{ side: "ours" | "opponent"; playerId: number | null; label: string } | null>(null);
@@ -177,6 +180,7 @@ export function MatchWorkspace({
     return positions;
   }, [initialPositions, substitutions]);
   const playingSeconds = useMemo(() => calculatePlayingSeconds(roster, substitutions, clockSeconds), [roster, substitutions, clockSeconds]);
+  const positionStatistics = useMemo(() => calculatePositionStatistics(roster, substitutions, clockSeconds), [roster, substitutions, clockSeconds]);
 
   const rosterPayload = roster.map((entry) => {
     const position = initialPositions.get(entry.playerId) ?? "bench";
@@ -377,6 +381,16 @@ export function MatchWorkspace({
           <div><h3 className="font-bold">Hendelseslogg</h3>{events.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen hendelser registrert.</p> : <div className="mt-2 space-y-2">{events.map((event) => { const player = players.find((item) => item.id === event.playerId); const actor = event.side === "opponent" ? match.opponent : player?.name ?? "Ukjent spiller"; const isGoal = event.type === "goal_open" || event.type === "goal_penalty"; return <div key={event.id} role={canRecord && isGoal ? "button" : undefined} tabIndex={canRecord && isGoal ? 0 : undefined} onClick={() => { if (canRecord && isGoal) setSelectedLoggedGoal(event); }} onKeyDown={(keyEvent) => { if (canRecord && isGoal && (keyEvent.key === "Enter" || keyEvent.key === " ")) setSelectedLoggedGoal(event); }} className={`flex min-h-12 items-center justify-between rounded-xl border px-3 py-2 ${event.annulled ? "border-dashed bg-slate-100 opacity-70" : canRecord && isGoal ? "cursor-pointer hover:border-primary hover:bg-red-50/40" : ""}`}><div className="flex min-w-0 items-center gap-2"><span className="w-20 shrink-0 text-xs font-bold text-muted-foreground">{formatEventTime(event.period, event.periodSecond)}</span><span className={`shrink-0 rounded-lg px-2 py-1 text-xs font-bold ${event.annulled ? "bg-slate-400 text-white line-through" : eventInfo[event.type].className}`}>{eventInfo[event.type].short}</span><span className={`truncate text-sm font-medium ${event.annulled ? "line-through" : ""}`}>{actor}</span>{event.annulled && <Badge variant="outline">Annullert</Badge>}</div>{canRecord && !isGoal && <Button aria-label={`Angre ${eventInfo[event.type].label}`} size="icon-sm" variant="ghost" onClick={() => void onDeleteEvent(event.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
           <div><h3 className="font-bold">Bytter</h3>{substitutions.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen bytter registrert.</p> : <div className="mt-2 space-y-2">{[...substitutions].reverse().map((substitution, index) => { const playerIn = players.find((item) => item.id === substitution.playerInId); const playerOut = players.find((item) => item.id === substitution.playerOutId); return <div key={substitution.id} className="flex min-h-12 items-center justify-between rounded-xl border px-3 py-2"><div className="min-w-0">{substitution.swap ? <p className="truncate text-sm font-semibold"><span className="text-sky-800">Posisjonsbytte: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"} ↔ {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span></p> : <p className="truncate text-sm font-semibold"><span className="text-emerald-700">Inn: {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span> · <span className="text-primary">Ut: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"}</span></p>}<p className="text-xs text-muted-foreground">{formatEventTime(substitution.period, substitution.periodSecond)} · {substitution.swap ? "Byttet posisjon" : positionLayout[substitution.position]?.label ?? "Posisjon"}</p></div>{canRecord && index === 0 && <Button aria-label="Angre siste bytte" size="icon-sm" variant="ghost" onClick={() => void onDeleteSubstitution(substitution.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
         </section>
+
+        {showPositionStats && match.status === "completed" && <section className="rounded-2xl border p-4">
+          <div><h3 className="font-bold">Posisjoner i kampen</h3><p className="mt-1 text-xs text-muted-foreground">Beregnet fra startoppstillingen og alle registrerte bytter.</p></div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {rosterPlayers.map((player) => {
+              const stats = positionStatistics.get(player.id);
+              return <article key={player.id} className="rounded-xl border bg-slate-50 p-3"><div className="flex items-center justify-between gap-3"><p className="font-semibold">{playerLabel(player)}</p><Badge variant="outline">{formatPlayingTime(stats?.totalSeconds ?? 0)}</Badge></div>{stats?.positions.length ? <div className="mt-2 flex flex-wrap gap-1.5">{stats.positions.map((position) => <Badge key={position.position} className="bg-sky-100 text-sky-950">{positionLabels[position.position]} · {formatPlayingTime(position.seconds)} · {position.stints} {position.stints === 1 ? "gang" : "ganger"}</Badge>)}</div> : <p className="mt-2 text-xs text-muted-foreground">Ingen registrert tid på banen.</p>}</article>;
+            })}
+          </div>
+        </section>}
       </div>
 
       <Dialog open={Boolean(selectedTarget)} onOpenChange={(isOpen) => { if (!isOpen) setSelectedTarget(null); }}>

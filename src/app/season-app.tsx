@@ -54,6 +54,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import { trainingThemeOptions } from "@/lib/training-themes";
+import { calculatePositionStatistics, positionLabels, type PositionStat } from "@/lib/match-position-stats";
 import { fetchSeriesTable, type SeriesTableData } from "@/lib/series-standings";
 import { applyAction, clearAuthCallback, fetchCupSnapshot, fetchLiveMatch, fetchMatchEnhancements, fetchSnapshot, fetchTrainingObservations, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
 import { MatchWorkspace } from "./match-workspace";
@@ -519,6 +520,7 @@ export function SeasonApp() {
           substitutions={visibleMatchSubstitutions.filter((entry) => entry.matchId === activeMatch.id)}
           comments={data.matchComments.filter((entry) => entry.matchId === activeMatch.id)}
           canRecord={canRecordMatch(activeMatch.id) && activeMatch.status !== "completed" && activeMatch.status !== "cancelled"}
+          showPositionStats={isAdmin}
           onOpenChange={(open) => { if (!open) setActiveMatchId(null); }}
           onSave={(payload) => runAction({ action: "saveMatchNotes", matchId: activeMatch.id, notes: payload.notes }, "Kampnotatet er oppdatert.")}
           onClock={(clockMode, elapsedSeconds, periodElapsedSeconds, clockStartedAt) => runAction({ action: "setMatchClock", matchId: activeMatch.id, clockMode, elapsedSeconds, periodElapsedSeconds, clockStartedAt }, clockMode === "finish_period" ? "Første omgang er avsluttet." : clockMode === "start_second" ? "Andre omgang er startet." : clockMode === "pause" ? "Kampklokken er pauset." : clockMode === "reset" ? "Kampklokken er nullstilt." : "Kampklokken er startet.")}
@@ -763,8 +765,32 @@ function StatsSection({ data }: { data: SeasonData }) {
   const SortHead = ({ value, label }: { value: SortKey; label: string }) => <TableHead className={value === "name" ? "" : "text-center"}><button type="button" onClick={() => chooseSort(value)} className={`inline-flex min-h-10 items-center gap-1 whitespace-nowrap font-bold ${sortKey === value ? "text-primary" : "text-slate-700"}`}>{label}{sortKey === value && (descending ? <ArrowDown className="size-3.5" /> : <ArrowUp className="size-3.5" />)}</button></TableHead>;
   return <div className="space-y-5">
     <SectionCard eyebrow="Automatisk oversikt" title="Sesongstatistikk" count={`${completedTrainings.length} gjennomførte treninger · ${completedMatches.length} valgte kamper`}><TrainingFocusSummary trainings={completedTrainings} /><div className="mt-5 grid gap-3 rounded-2xl border bg-white p-3 sm:grid-cols-2"><Field label="Vis statistikk for" htmlFor="stats-scope" className="!mt-0"><Select value={scope} onValueChange={setScope}><SelectTrigger id="stats-scope"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle kamper</SelectItem><SelectItem value="league">Serie</SelectItem><SelectItem value="cup">Alle cuper</SelectItem>{cupNames.map((cup) => <SelectItem key={cup} value={`cup:${cup}`}>{cup}</SelectItem>)}<SelectItem value="friendly">Vennskapskamper</SelectItem></SelectContent></Select></Field><div className="sm:hidden"><Field label="Sorter etter" htmlFor="stats-sort" className="!mt-0"><div className="flex gap-2"><Select value={sortKey} onValueChange={(value) => chooseSort(value as SortKey)}><SelectTrigger id="stats-sort"><SelectValue /></SelectTrigger><SelectContent>{sortOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select><Button aria-label={descending ? "Sorter stigende" : "Sorter synkende"} variant="outline" size="icon" onClick={() => setDescending((value) => !value)}>{descending ? <ArrowDown /> : <ArrowUp />}</Button></div></Field></div></div>{rows.length === 0 ? <EmptyState icon={BarChart3} title="Ingen statistikk ennå" text="Statistikken fylles når treninger og kamper markeres som gjennomført." /> : <div className="mt-3 overflow-x-auto rounded-2xl border bg-white"><Table><TableHeader><TableRow>{sortOptions.map((option) => <SortHead key={option.value} value={option.value} label={option.label} />)}</TableRow></TableHeader><TableBody>{rows.map((row) => <TableRow key={row.player.id}><TableCell className="whitespace-nowrap font-semibold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</TableCell><TableCell className="text-center">{row.trainings}</TableCell><TableCell className="text-center">{row.matches}</TableCell><TableCell className="text-center">{row.starts}</TableCell><TableCell className="whitespace-nowrap text-center">{formatSeasonPlayingTime(row.playingSeconds)}</TableCell><TableCell className="text-center">{row.goals}</TableCell><TableCell className="text-center">{row.saves}</TableCell><TableCell className="text-center">{row.twoMinutes}</TableCell><TableCell className="text-center">{row.captain}</TableCell></TableRow>)}</TableBody></Table></div>}<p className="mt-4 text-xs leading-5 text-muted-foreground">Bare aktiviteter som er markert som gjennomført inngår i statistikken. Trening viser hele sesongen.</p></SectionCard>
+    <PositionUsageSummary data={data} matches={completedMatches} />
     <SeriesStandings table={data.seriesTable} />
   </div>;
+}
+
+function PositionUsageSummary({ data, matches }: { data: SeasonData; matches: Match[] }) {
+  const rows = data.players.filter((player) => Boolean(player.active)).map((player) => {
+    const totals = new Map<PositionStat["position"], { seconds: number; stints: number }>();
+    for (const match of matches) {
+      const roster = data.matchPlayers.filter((entry) => entry.matchId === match.id);
+      if (!roster.some((entry) => entry.playerId === player.id)) continue;
+      const statistics = calculatePositionStatistics(roster, data.matchSubstitutions.filter((entry) => entry.matchId === match.id), currentMatchSeconds(match)).get(player.id);
+      for (const position of statistics?.positions ?? []) {
+        const current = totals.get(position.position) ?? { seconds: 0, stints: 0 };
+        totals.set(position.position, { seconds: current.seconds + position.seconds, stints: current.stints + position.stints });
+      }
+    }
+    const positions = [...totals.entries()].map(([position, totalsForPosition]) => ({ position, ...totalsForPosition })).sort((a, b) => b.seconds - a.seconds || positionLabels[a.position].localeCompare(positionLabels[b.position], "nb-NO"));
+    return { player, positions, totalSeconds: positions.reduce((sum, position) => sum + position.seconds, 0) };
+  }).filter((row) => row.positions.length > 0).sort((a, b) => a.player.name.localeCompare(b.player.name, "nb-NO"));
+
+  return <SectionCard eyebrow="Spilletid og plassering" title="Posisjonsbruk" count={`${matches.length} gjennomførte kamper`}>
+    <p className="text-sm text-muted-foreground">Viser hvor lenge og hvor mange ganger spillerne har vært registrert i hver posisjon. Oversikten følger kampfilteret ovenfor.</p>
+    {rows.length === 0 ? <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen registrerte posisjoner i de valgte kampene.</p> : <div className="mt-4 grid gap-3 lg:grid-cols-2">{rows.map((row) => <article key={row.player.id} className="rounded-2xl border bg-white p-4"><div className="flex items-center justify-between gap-3"><p className="font-bold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</p><Badge variant="outline">{formatDetailedPlayingTime(row.totalSeconds)}</Badge></div><div className="mt-3 flex flex-wrap gap-2">{row.positions.map((position) => <Badge key={position.position} className="bg-sky-100 text-sky-950">{positionLabels[position.position]} · {formatDetailedPlayingTime(position.seconds)} · {position.stints} {position.stints === 1 ? "gang" : "ganger"}</Badge>)}</div></article>)}</div>}
+    <p className="mt-4 text-xs leading-5 text-muted-foreground">Posisjoner kan bare beregnes fra startoppstilling og bytter som faktisk er registrert i kampen.</p>
+  </SectionCard>;
 }
 
 function SeriesStandings({ table }: { table: SeriesTableData | null }) {
@@ -1071,4 +1097,9 @@ function currentMatchSeconds(match: Match) {
 
 function formatSeasonPlayingTime(seconds: number) {
   return `${Math.floor(Math.max(0, seconds) / 60)} min`;
+}
+
+function formatDetailedPlayingTime(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, "0")}`;
 }
