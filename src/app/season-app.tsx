@@ -771,6 +771,10 @@ function StatsSection({ data }: { data: SeasonData }) {
 }
 
 function PositionUsageSummary({ data, matches }: { data: SeasonData; matches: Match[] }) {
+  type PositionSortKey = "name" | "total" | PositionStat["position"];
+  const positionColumns: PositionStat["position"][] = ["goalkeeper", "left_wing", "left_back", "center", "right_back", "right_wing"];
+  const [sortKey, setSortKey] = useState<PositionSortKey>("total");
+  const [descending, setDescending] = useState(true);
   const rows = data.players.filter((player) => Boolean(player.active)).map((player) => {
     const totals = new Map<PositionStat["position"], { seconds: number; stints: number }>();
     for (const match of matches) {
@@ -782,13 +786,20 @@ function PositionUsageSummary({ data, matches }: { data: SeasonData; matches: Ma
         totals.set(position.position, { seconds: current.seconds + position.seconds, stints: current.stints + position.stints });
       }
     }
-    const positions = [...totals.entries()].map(([position, totalsForPosition]) => ({ position, ...totalsForPosition })).sort((a, b) => b.seconds - a.seconds || positionLabels[a.position].localeCompare(positionLabels[b.position], "nb-NO"));
-    return { player, positions, totalSeconds: positions.reduce((sum, position) => sum + position.seconds, 0) };
-  }).filter((row) => row.positions.length > 0).sort((a, b) => a.player.name.localeCompare(b.player.name, "nb-NO"));
+    const positions = [...totals.entries()].map(([position, totalsForPosition]) => ({ position, ...totalsForPosition }));
+    return { player, positions, totals, totalSeconds: positions.reduce((sum, position) => sum + position.seconds, 0) };
+  }).filter((row) => row.positions.length > 0).sort((a, b) => {
+    const aValue = sortKey === "name" ? a.player.name : sortKey === "total" ? a.totalSeconds : a.totals.get(sortKey)?.seconds ?? 0;
+    const bValue = sortKey === "name" ? b.player.name : sortKey === "total" ? b.totalSeconds : b.totals.get(sortKey)?.seconds ?? 0;
+    const result = typeof aValue === "string" ? aValue.localeCompare(String(bValue), "nb-NO") : aValue - Number(bValue);
+    return (descending ? -result : result) || a.player.name.localeCompare(b.player.name, "nb-NO");
+  });
+  function chooseSort(next: PositionSortKey) { if (next === sortKey) setDescending((value) => !value); else { setSortKey(next); setDescending(next !== "name"); } }
+  const SortButton = ({ value, label }: { value: PositionSortKey; label: string }) => <button type="button" onClick={() => chooseSort(value)} className={`inline-flex min-h-10 items-center gap-1 whitespace-nowrap font-bold ${sortKey === value ? "text-primary" : "text-slate-700"}`}>{label}{sortKey === value && (descending ? <ArrowDown className="size-3.5" /> : <ArrowUp className="size-3.5" />)}</button>;
 
   return <SectionCard eyebrow="Spilletid og plassering" title="Posisjonsbruk" count={`${matches.length} gjennomførte kamper`}>
-    <p className="text-sm text-muted-foreground">Viser hvor lenge og hvor mange ganger spillerne har vært registrert i hver posisjon. Oversikten følger kampfilteret ovenfor.</p>
-    {rows.length === 0 ? <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen registrerte posisjoner i de valgte kampene.</p> : <div className="mt-4 grid gap-3 lg:grid-cols-2">{rows.map((row) => <article key={row.player.id} className="rounded-2xl border bg-white p-4"><div className="flex items-center justify-between gap-3"><p className="font-bold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</p><Badge variant="outline">{formatDetailedPlayingTime(row.totalSeconds)}</Badge></div><div className="mt-3 flex flex-wrap gap-2">{row.positions.map((position) => <Badge key={position.position} className="bg-sky-100 text-sky-950">{positionLabels[position.position]} · {formatDetailedPlayingTime(position.seconds)} · {position.stints} {position.stints === 1 ? "gang" : "ganger"}</Badge>)}</div></article>)}</div>}
+    <p className="text-sm text-muted-foreground">Trykk på en kolonneoverskrift for å sortere. Hver posisjon viser spilletid øverst og antall ganger under.</p>
+    {rows.length === 0 ? <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen registrerte posisjoner i de valgte kampene.</p> : <div className="mt-4 overflow-x-auto rounded-2xl border bg-white"><Table className="min-w-[1050px]"><TableHeader><TableRow><TableHead className="sticky left-0 z-10 min-w-56 bg-slate-50"><SortButton value="name" label="Spiller" /></TableHead><TableHead className="min-w-24 text-center"><SortButton value="total" label="Totalt" /></TableHead>{positionColumns.map((position) => <TableHead key={position} className="min-w-32 text-center"><SortButton value={position} label={positionLabels[position]} /></TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row) => <TableRow key={row.player.id}><TableCell className="sticky left-0 z-[1] whitespace-nowrap bg-white font-semibold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</TableCell><TableCell className="whitespace-nowrap text-center font-bold">{formatDetailedPlayingTime(row.totalSeconds)}</TableCell>{positionColumns.map((position) => { const value = row.totals.get(position); return <TableCell key={position} className={`text-center ${sortKey === position ? "bg-red-50/60" : ""}`}>{value ? <><span className="block whitespace-nowrap font-bold">{formatDetailedPlayingTime(value.seconds)}</span><span className="block whitespace-nowrap text-xs text-muted-foreground">{value.stints} {value.stints === 1 ? "gang" : "ganger"}</span></> : <span className="text-muted-foreground">–</span>}</TableCell>; })}</TableRow>)}</TableBody></Table></div>}
     <p className="mt-4 text-xs leading-5 text-muted-foreground">Posisjoner kan bare beregnes fra startoppstilling og bytter som faktisk er registrert i kampen.</p>
   </SectionCard>;
 }
