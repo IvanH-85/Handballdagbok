@@ -766,10 +766,93 @@ function StatsSection({ data }: { data: SeasonData }) {
   return <div className="space-y-5">
     <SectionCard eyebrow="Automatisk oversikt" title="Sesongstatistikk" count={`${completedTrainings.length} gjennomførte treninger · ${completedMatches.length} valgte kamper`}><TrainingFocusSummary trainings={completedTrainings} /><div className="mt-5 grid gap-3 rounded-2xl border bg-white p-3 sm:grid-cols-2"><Field label="Vis statistikk for" htmlFor="stats-scope" className="!mt-0"><Select value={scope} onValueChange={setScope}><SelectTrigger id="stats-scope"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle kamper</SelectItem><SelectItem value="league">Serie</SelectItem><SelectItem value="cup">Alle cuper</SelectItem>{cupNames.map((cup) => <SelectItem key={cup} value={`cup:${cup}`}>{cup}</SelectItem>)}<SelectItem value="friendly">Vennskapskamper</SelectItem></SelectContent></Select></Field><div className="sm:hidden"><Field label="Sorter etter" htmlFor="stats-sort" className="!mt-0"><div className="flex gap-2"><Select value={sortKey} onValueChange={(value) => chooseSort(value as SortKey)}><SelectTrigger id="stats-sort"><SelectValue /></SelectTrigger><SelectContent>{sortOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select><Button aria-label={descending ? "Sorter stigende" : "Sorter synkende"} variant="outline" size="icon" onClick={() => setDescending((value) => !value)}>{descending ? <ArrowDown /> : <ArrowUp />}</Button></div></Field></div></div>{rows.length === 0 ? <EmptyState icon={BarChart3} title="Ingen statistikk ennå" text="Statistikken fylles når treninger og kamper markeres som gjennomført." /> : <div className="mt-3 overflow-x-auto rounded-2xl border bg-white"><Table><TableHeader><TableRow>{sortOptions.map((option) => <SortHead key={option.value} value={option.value} label={option.label} />)}</TableRow></TableHeader><TableBody>{rows.map((row) => <TableRow key={row.player.id}><TableCell className="whitespace-nowrap font-semibold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</TableCell><TableCell className="text-center">{row.trainings}</TableCell><TableCell className="text-center">{row.matches}</TableCell><TableCell className="text-center">{row.starts}</TableCell><TableCell className="whitespace-nowrap text-center">{formatSeasonPlayingTime(row.playingSeconds)}</TableCell><TableCell className="text-center">{row.goals}</TableCell><TableCell className="text-center">{row.saves}</TableCell><TableCell className="text-center">{row.twoMinutes}</TableCell><TableCell className="text-center">{row.captain}</TableCell></TableRow>)}</TableBody></Table></div>}<p className="mt-4 text-xs leading-5 text-muted-foreground">Bare aktiviteter som er markert som gjennomført inngår i statistikken. Trening viser hele sesongen.</p></SectionCard>
     <RecentPlayingTimeSummary data={data} matches={completedMatches} />
+    <CrossMatchReport data={data} matches={completedMatches} />
     <PlayerUsageOverview data={data} matches={completedMatches} />
     <PositionUsageSummary data={data} matches={completedMatches} />
     <SeriesStandings table={data.seriesTable} />
   </div>;
+}
+
+function CrossMatchReport({ data, matches }: { data: SeasonData; matches: Match[] }) {
+  type CombinationRow = { key: string; playerIds: number[]; seconds: number; goalsFor: number; goalsAgainst: number; matchIds: Set<number> };
+  const phaseLabels = ["Start 1. omgang", "Midt i 1. omgang", "Slutt 1. omgang", "Start 2. omgang", "Midt i 2. omgang", "Slutt 2. omgang"];
+  const phases = phaseLabels.map((label) => ({ label, goalsFor: 0, goalsAgainst: 0, matches: new Set<number>() }));
+  const lineups = new Map<string, CombinationRow>();
+  const trios = new Map<string, CombinationRow>();
+  const goalTypes = new Set<EventType>(["goal_open", "goal_penalty"]);
+
+  const addCombination = (target: Map<string, CombinationRow>, playerIds: number[], seconds: number, goalsFor: number, goalsAgainst: number, matchId: number) => {
+    const sortedIds = [...playerIds].sort((a, b) => a - b);
+    const key = sortedIds.join("-");
+    const current = target.get(key) ?? { key, playerIds: sortedIds, seconds: 0, goalsFor: 0, goalsAgainst: 0, matchIds: new Set<number>() };
+    current.seconds += seconds;
+    current.goalsFor += goalsFor;
+    current.goalsAgainst += goalsAgainst;
+    current.matchIds.add(matchId);
+    target.set(key, current);
+  };
+
+  for (const match of matches) {
+    const matchEvents = data.matchEvents.filter((event) => event.matchId === match.id && !event.annulled && goalTypes.has(event.type));
+    const periodLength = Math.max(60, match.periodMinutes * 60);
+    for (const event of matchEvents) {
+      const periodIndex = Math.min(1, Math.max(0, event.period - 1));
+      const third = Math.min(2, Math.floor(Math.max(0, event.periodSecond) / Math.max(1, periodLength / 3)));
+      const phase = phases[periodIndex * 3 + third];
+      if (event.side === "ours") phase.goalsFor += 1;
+      else phase.goalsAgainst += 1;
+      phase.matches.add(match.id);
+    }
+
+    const roster = data.matchPlayers.filter((entry) => entry.matchId === match.id);
+    const substitutions = data.matchSubstitutions.filter((entry) => entry.matchId === match.id).sort((a, b) => a.matchSecond - b.matchSecond || a.id - b.id);
+    const positions = normalizeMatchPositions(roster);
+    const matchEnd = currentMatchSeconds(match);
+    let intervalStart = 0;
+    const recordInterval = (intervalEnd: number, includeEnd: boolean) => {
+      const safeEnd = Math.min(matchEnd, Math.max(intervalStart, intervalEnd));
+      const seconds = safeEnd - intervalStart;
+      if (seconds <= 0) return;
+      const activePlayerIds = [...positions.entries()].filter(([, position]) => position !== "bench").map(([playerId]) => playerId);
+      if (activePlayerIds.length < 3) { intervalStart = safeEnd; return; }
+      const intervalGoals = matchEvents.filter((event) => event.matchSecond >= intervalStart && (includeEnd ? event.matchSecond <= safeEnd : event.matchSecond < safeEnd));
+      const goalsFor = intervalGoals.filter((event) => event.side === "ours").length;
+      const goalsAgainst = intervalGoals.filter((event) => event.side === "opponent").length;
+      if (activePlayerIds.length >= 5 && activePlayerIds.length <= 6) addCombination(lineups, activePlayerIds, seconds, goalsFor, goalsAgainst, match.id);
+      for (let first = 0; first < activePlayerIds.length - 2; first += 1) for (let second = first + 1; second < activePlayerIds.length - 1; second += 1) for (let third = second + 1; third < activePlayerIds.length; third += 1) addCombination(trios, [activePlayerIds[first], activePlayerIds[second], activePlayerIds[third]], seconds, goalsFor, goalsAgainst, match.id);
+      intervalStart = safeEnd;
+    };
+    for (const substitution of substitutions) {
+      recordInterval(substitution.matchSecond, false);
+      positions.set(substitution.playerOutId, substitution.swap ? substitution.playerInPreviousPosition ?? "bench" : "bench");
+      positions.set(substitution.playerInId, substitution.position);
+    }
+    recordInterval(matchEnd, true);
+  }
+
+  const phaseRows = phases.filter((phase, index) => index < 3 || matches.some((match) => match.periodCount > 1)).map((phase) => ({ ...phase, difference: phase.goalsFor - phase.goalsAgainst }));
+  const rate = (row: CombinationRow) => row.seconds ? ((row.goalsFor - row.goalsAgainst) / row.seconds) * 600 : 0;
+  const combinationName = (row: CombinationRow) => row.playerIds.map((id) => shortPlayerName(data.players.find((player) => player.id === id)?.name ?? "Ukjent")).join(", ");
+  const lineupRows = [...lineups.values()].sort((a, b) => Number((b.seconds >= 480 || b.matchIds.size >= 2)) - Number((a.seconds >= 480 || a.matchIds.size >= 2)) || rate(b) - rate(a) || b.seconds - a.seconds).slice(0, 10);
+  const trioRows = [...trios.values()].filter((row) => row.seconds >= 900 || row.matchIds.size >= 3).sort((a, b) => rate(b) - rate(a) || b.seconds - a.seconds).slice(0, 6);
+  const comparablePhases = phaseRows.filter((phase) => phase.goalsFor + phase.goalsAgainst > 0);
+  const strongestPhase = [...comparablePhases].sort((a, b) => b.difference - a.difference)[0];
+  const hardestPhase = [...comparablePhases].sort((a, b) => a.difference - b.difference)[0];
+  const trustedLineups = [...lineups.values()].filter((row) => row.seconds >= 480 || row.matchIds.size >= 2).sort((a, b) => rate(b) - rate(a));
+  const strongestLineup = trustedLineups[0];
+
+  return <SectionCard eyebrow="Kun for administratorer" title="Kamprapport på tvers av kamper" count={`${matches.length} gjennomførte kamper i valgt filter`}>
+    {matches.length === 0 ? <EmptyState icon={BarChart3} title="Ingen kamper å sammenligne" text="Rapporten fylles når kamper er gjennomført med registrerte mål og bytter." /> : <div className="space-y-7">
+      <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4"><h3 className="font-black text-sky-950">Det rapporten finner nå</h3><div className="mt-3 grid gap-2 text-sm text-sky-950 md:grid-cols-3"><p className="rounded-xl bg-white/70 p-3"><span className="block text-xs font-bold uppercase tracking-wider text-sky-700">Sterkeste periode</span><span className="mt-1 block font-bold">{strongestPhase ? `${strongestPhase.label} · ${strongestPhase.difference > 0 ? "+" : ""}${strongestPhase.difference} mål` : "For lite måldata"}</span></p><p className="rounded-xl bg-white/70 p-3"><span className="block text-xs font-bold uppercase tracking-wider text-sky-700">Mest krevende periode</span><span className="mt-1 block font-bold">{hardestPhase ? `${hardestPhase.label} · ${hardestPhase.difference > 0 ? "+" : ""}${hardestPhase.difference} mål` : "For lite måldata"}</span></p><p className="rounded-xl bg-white/70 p-3"><span className="block text-xs font-bold uppercase tracking-wider text-sky-700">Sterk lagsammensetning</span><span className="mt-1 block font-bold">{strongestLineup ? `${combinationName(strongestLineup)} · ${rate(strongestLineup) >= 0 ? "+" : ""}${rate(strongestLineup).toFixed(1)} per 10 min` : "Ingen med nok spilletid ennå"}</span></p></div></section>
+
+      <section><div className="mb-3"><h3 className="font-black">Gjentakelser i kampforløpet</h3><p className="mt-1 text-sm text-muted-foreground">Hver omgang deles i tre like deler, slik at serie- og cupkamper med ulik spilletid kan sammenlignes.</p></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{phaseRows.map((phase) => <article key={phase.label} className={`rounded-2xl border p-4 ${phase.difference > 0 ? "border-emerald-200 bg-emerald-50" : phase.difference < 0 ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}><p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{phase.label}</p><div className="mt-2 flex items-end justify-between gap-3"><p className="text-3xl font-black">{phase.goalsFor}–{phase.goalsAgainst}</p><Badge className={phase.difference > 0 ? "bg-emerald-100 text-emerald-900" : phase.difference < 0 ? "bg-red-100 text-red-900" : "bg-amber-100 text-amber-950"}>{phase.difference > 0 ? `+${phase.difference}` : phase.difference}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Registrerte mål fra {phase.matches.size} {phase.matches.size === 1 ? "kamp" : "kamper"}</p></article>)}</div></section>
+
+      <section><div className="mb-3"><h3 className="font-black">Lagsammensetninger</h3><p className="mt-1 text-sm text-muted-foreground">Målforskjell per ti minutter gjør kombinasjoner med ulik spilletid lettere å sammenligne.</p></div>{lineupRows.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen komplette oppstillinger kunne beregnes fra bytteloggen.</p> : <div className="overflow-x-auto rounded-2xl border bg-white"><Table className="min-w-[900px]"><TableHeader><TableRow><TableHead>Spillere på banen</TableHead><TableHead className="text-center">Tid</TableHead><TableHead className="text-center">Kamper</TableHead><TableHead className="text-center">Mål</TableHead><TableHead className="text-center">+/− per 10 min</TableHead><TableHead>Datagrunnlag</TableHead></TableRow></TableHeader><TableBody>{lineupRows.map((row) => { const trusted = row.seconds >= 480 || row.matchIds.size >= 2; return <TableRow key={row.key}><TableCell className="font-semibold">{combinationName(row)}</TableCell><TableCell className="text-center">{formatDetailedPlayingTime(row.seconds)}</TableCell><TableCell className="text-center">{row.matchIds.size}</TableCell><TableCell className="text-center">{row.goalsFor}–{row.goalsAgainst}</TableCell><TableCell className={`text-center font-black ${rate(row) > 0 ? "text-emerald-700" : rate(row) < 0 ? "text-red-700" : ""}`}>{rate(row) > 0 ? "+" : ""}{rate(row).toFixed(1)}</TableCell><TableCell>{trusted ? <Badge className="bg-emerald-100 text-emerald-900">Kan vurderes</Badge> : <Badge variant="outline">For lite data</Badge>}</TableCell></TableRow>; })}</TableBody></Table></div>}</section>
+
+      <section><div className="mb-3"><h3 className="font-black">Tre spillere som fungerer sammen</h3><p className="mt-1 text-sm text-muted-foreground">Viser bare grupper som har minst 15 minutter sammen eller er brukt i minst tre kamper.</p></div>{trioRows.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Foreløpig er ingen tre-spillergrupper brukt lenge nok til en sammenligning.</p> : <div className="grid gap-3 md:grid-cols-2">{trioRows.map((row) => <article key={row.key} className="rounded-2xl border bg-white p-4"><p className="font-bold">{combinationName(row)}</p><div className="mt-3 flex flex-wrap gap-2 text-sm"><Badge variant="outline">{formatDetailedPlayingTime(row.seconds)}</Badge><Badge variant="outline">{row.matchIds.size} kamper</Badge><Badge className={rate(row) >= 0 ? "bg-emerald-100 text-emerald-900" : "bg-red-100 text-red-900"}>{row.goalsFor}–{row.goalsAgainst} · {rate(row) > 0 ? "+" : ""}{rate(row).toFixed(1)} per 10 min</Badge></div></article>)}</div>}</section>
+    </div>}
+    <p className="mt-5 text-xs leading-5 text-muted-foreground">Rapporten viser sammenhenger, ikke årsaker. Motstander, kampbilde og registreringskvalitet påvirker tallene. Bruk derfor oversikten sammen med trenernes egne observasjoner.</p>
+  </SectionCard>;
 }
 
 function RecentPlayingTimeSummary({ data, matches }: { data: SeasonData; matches: Match[] }) {
