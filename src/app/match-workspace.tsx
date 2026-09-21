@@ -92,7 +92,7 @@ export function MatchWorkspace({
   onSetEventAnnulled,
   onChangeGoalScorer,
   onSubstitution,
-  onSwapKeeper,
+  onSwapPlayers,
   onDeleteSubstitution,
   onAddComment,
   onDeleteComment,
@@ -115,7 +115,7 @@ export function MatchWorkspace({
   onSetEventAnnulled: (eventId: number, annulled: boolean) => Promise<boolean>;
   onChangeGoalScorer: (eventId: number, playerId: number) => Promise<boolean>;
   onSubstitution: (playerInId: number, playerOutId: number, matchSecond: number, period: number, periodSecond: number) => Promise<boolean>;
-  onSwapKeeper: (goalkeeperId: number, playerId: number, matchSecond: number, period: number, periodSecond: number) => Promise<boolean>;
+  onSwapPlayers: (playerOutId: number, playerInId: number, matchSecond: number, period: number, periodSecond: number) => Promise<boolean>;
   onDeleteSubstitution: (id: number) => Promise<boolean>;
   onAddComment: (body: string, visibility: "public" | "internal") => Promise<boolean>;
   onDeleteComment: (id: number) => Promise<boolean>;
@@ -123,9 +123,8 @@ export function MatchWorkspace({
   onComplete: (elapsedSeconds: number, periodElapsedSeconds: number) => Promise<boolean>;
 }) {
   const [selectedTarget, setSelectedTarget] = useState<{ side: "ours" | "opponent"; playerId: number | null; label: string } | null>(null);
-  const [playerComingIn, setPlayerComingIn] = useState<number | null>(null);
   const [playerGoingOut, setPlayerGoingOut] = useState<{ playerId: number; reason: "two_min" | "red" } | null>(null);
-  const [keeperChanging, setKeeperChanging] = useState<number | null>(null);
+  const [playerChanging, setPlayerChanging] = useState<number | null>(null);
   const [selectedLoggedGoal, setSelectedLoggedGoal] = useState<MatchEvent | null>(null);
   const [goalScorerChanging, setGoalScorerChanging] = useState<MatchEvent | null>(null);
   const [commentText, setCommentText] = useState("");
@@ -210,14 +209,6 @@ export function MatchWorkspace({
     else if (requiresReplacement && target.playerId) setPlayerGoingOut({ playerId: target.playerId, reason: type as "two_min" | "red" });
   }
 
-  async function completeSubstitution(playerOutId: number) {
-    if (!playerComingIn) return;
-    const playerInId = playerComingIn;
-    setPlayerComingIn(null);
-    const ok = await onSubstitution(playerInId, playerOutId, clockSeconds, activePeriod, displayedPeriodSeconds);
-    if (!ok) setPlayerComingIn(playerInId);
-  }
-
   async function completeForcedReplacement(playerInId: number) {
     if (!playerGoingOut) return;
     const outgoing = playerGoingOut;
@@ -226,15 +217,18 @@ export function MatchWorkspace({
     if (!ok) setPlayerGoingOut(outgoing);
   }
 
-  async function completeKeeperChange(playerId: number) {
-    if (!keeperChanging) return;
-    const goalkeeperId = keeperChanging;
-    const selectedPosition = currentPositions.get(playerId) ?? "bench";
-    setKeeperChanging(null);
+  async function completePlayerChange(playerId: number) {
+    if (!playerChanging) return;
+    const selectedPlayerId = playerChanging;
+    const selectedPosition = currentPositions.get(selectedPlayerId) ?? "bench";
+    const targetPosition = currentPositions.get(playerId) ?? "bench";
+    setPlayerChanging(null);
     const ok = selectedPosition === "bench"
-      ? await onSubstitution(playerId, goalkeeperId, clockSeconds, activePeriod, displayedPeriodSeconds)
-      : await onSwapKeeper(goalkeeperId, playerId, clockSeconds, activePeriod, displayedPeriodSeconds);
-    if (!ok) setKeeperChanging(goalkeeperId);
+      ? await onSubstitution(selectedPlayerId, playerId, clockSeconds, activePeriod, displayedPeriodSeconds)
+      : targetPosition === "bench"
+        ? await onSubstitution(playerId, selectedPlayerId, clockSeconds, activePeriod, displayedPeriodSeconds)
+        : await onSwapPlayers(selectedPlayerId, playerId, clockSeconds, activePeriod, displayedPeriodSeconds);
+    if (!ok) setPlayerChanging(selectedPlayerId);
   }
 
   async function saveComment(visibility: "public" | "internal") {
@@ -260,14 +254,9 @@ export function MatchWorkspace({
       if (position === "bench") void completeForcedReplacement(player.id);
       return;
     }
-    if (playerComingIn && position !== "bench") {
-      void completeSubstitution(player.id);
-      return;
-    }
     setSelectedTarget({ side: "ours", playerId: player.id, label: playerLabel(player) });
   }
 
-  const comingInPlayer = players.find((player) => player.id === playerComingIn);
   const goingOutPlayer = players.find((player) => player.id === playerGoingOut?.playerId);
   const phase = match.status === "completed" ? "completed" : match.matchPhase || (match.currentPeriod === 2 ? "second_half" : match.currentPeriod === 1 ? "first_half" : "pre_match");
   const clockIsRunning = Boolean(match.clockRunning) && displayedPeriodSeconds < periodLimitSeconds;
@@ -310,10 +299,6 @@ export function MatchWorkspace({
           {ourGoals.length > 0 && <div className="mt-4 border-t border-white/20 pt-3"><p className="text-center text-xs font-bold uppercase tracking-wider text-red-100">Siste mål</p><div className="mt-2 flex flex-wrap justify-center gap-1.5">{ourGoals.slice(0, 6).map((event) => { const player = players.find((item) => item.id === event.playerId); return <span key={event.id} className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-semibold">{player ? compactName(player.name, rosterPlayers) : "Spiller"} · {formatEventTime(event.period, event.periodSecond)}</span>; })}</div></div>}
         </section>
 
-        {playerComingIn && <div className="flex items-center justify-between gap-3 rounded-2xl border-2 border-sky-500 bg-sky-50 p-3 text-sky-950">
-          <div><p className="font-bold">{comingInPlayer ? `${compactName(comingInPlayer.name, rosterPlayers)} skal inn` : "Spiller skal inn"}</p><p className="text-sm">Trykk på spilleren på banen som skal ut.</p></div>
-          <Button variant="outline" onClick={() => setPlayerComingIn(null)}>Avbryt</Button>
-        </div>}
         {playerGoingOut && <div className="flex items-center justify-between gap-3 rounded-2xl border-2 border-orange-500 bg-orange-50 p-3 text-orange-950">
           <div><p className="font-bold">{goingOutPlayer ? `${compactName(goingOutPlayer.name, rosterPlayers)} har fått ${playerGoingOut.reason === "red" ? "rødt kort" : "2 minutter"}` : "Velg innbytter"}</p><p className="text-sm">J12 spiller videre med fullt lag. Trykk på spilleren på benken som skal inn nå.</p></div>
           <Button variant="outline" onClick={() => setPlayerGoingOut(null)}>Avbryt</Button>
@@ -329,7 +314,7 @@ export function MatchWorkspace({
             <div className="absolute left-1/2 top-0 h-[27%] w-[62%] -translate-x-1/2 rounded-b-[50%] border-x-2 border-b-2 border-white/80" />
             <div className="absolute bottom-0 left-1/2 h-[27%] w-[62%] -translate-x-1/2 rounded-t-[50%] border-x-2 border-t-2 border-white/80" />
 
-            <button type="button" disabled={!canRecord || Boolean(playerComingIn || playerGoingOut)} onClick={() => setSelectedTarget({ side: "opponent", playerId: null, label: match.opponent })} className="absolute left-1/2 top-[20%] z-10 min-h-14 w-[54%] -translate-x-1/2 -translate-y-1/2 rounded-2xl border-2 border-white bg-[#7c1117] px-3 py-2 text-center text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-80">
+            <button type="button" disabled={!canRecord || Boolean(playerGoingOut)} onClick={() => setSelectedTarget({ side: "opponent", playerId: null, label: match.opponent })} className="absolute left-1/2 top-[20%] z-10 min-h-14 w-[54%] -translate-x-1/2 -translate-y-1/2 rounded-2xl border-2 border-white bg-[#7c1117] px-3 py-2 text-center text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-80">
               <span className="block text-xs font-bold uppercase tracking-wider text-red-100">Motstanderlaget</span><span className="mt-1 block truncate font-black">{match.opponent}</span>
             </button>
 
@@ -337,7 +322,7 @@ export function MatchWorkspace({
               const playerId = [...currentPositions.entries()].find(([, playerPosition]) => playerPosition === position)?.[0];
               const player = players.find((item) => item.id === playerId);
               if (!player) return <div key={position} style={{ left: positionLayout[position].left, top: positionLayout[position].top }} className="absolute w-[22%] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-dashed border-white/70 bg-white/20 px-1 py-2 text-center text-[10px] font-bold text-white/90 sm:text-xs">{positionLayout[position].label}</div>;
-              return <CourtPlayerButton key={position} player={player} displayName={compactName(player.name, rosterPlayers)} position={position} seconds={playingSeconds.get(player.id) ?? 0} marks={disciplineMarks(events, player.id)} captain={Boolean(roster.find((entry) => entry.playerId === player.id)?.captain)} selectingOutgoing={Boolean(playerComingIn)} disabled={!canRecord || Boolean(playerGoingOut)} onClick={() => selectPlayer(player)} />;
+              return <CourtPlayerButton key={position} player={player} displayName={compactName(player.name, rosterPlayers)} position={position} seconds={playingSeconds.get(player.id) ?? 0} marks={disciplineMarks(events, player.id)} captain={Boolean(roster.find((entry) => entry.playerId === player.id)?.captain)} selectingOutgoing={false} disabled={!canRecord || Boolean(playerGoingOut)} onClick={() => selectPlayer(player)} />;
             })}
           </div>
 
@@ -349,7 +334,7 @@ export function MatchWorkspace({
                 if (!player) return null;
                 const marks = disciplineMarks(events, player.id);
                 const unavailable = redPlayerIds.has(player.id);
-                return <button key={player.id} type="button" disabled={!canRecord || Boolean(playerComingIn) || unavailable} onClick={() => selectPlayer(player)} className={`min-h-12 rounded-xl border px-3 py-2 text-left shadow-sm transition hover:border-primary disabled:opacity-80 ${playerGoingOut && !unavailable ? "animate-pulse border-orange-500 bg-orange-50" : unavailable ? "border-red-300 bg-red-50" : "bg-white"}`}>
+                return <button key={player.id} type="button" disabled={!canRecord || unavailable} onClick={() => selectPlayer(player)} className={`min-h-12 rounded-xl border px-3 py-2 text-left shadow-sm transition hover:border-primary disabled:opacity-80 ${playerGoingOut && !unavailable ? "animate-pulse border-orange-500 bg-orange-50" : unavailable ? "border-red-300 bg-red-50" : "bg-white"}`}>
                   <span className="flex items-center gap-1 text-sm font-bold">{entry.captain && <CaptainMark />}{playerLabel(player)}<PlayerMarks marks={marks} /></span><span className="block text-xs text-muted-foreground">{unavailable ? "Rødt kort · kan ikke byttes inn" : `${formatPlayingTime(playingSeconds.get(player.id) ?? 0)} på banen`}</span>
                 </button>;
               })}
@@ -373,7 +358,7 @@ export function MatchWorkspace({
 
         <section className="grid gap-4 lg:grid-cols-2">
           <div><h3 className="font-bold">Hendelseslogg</h3>{events.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen hendelser registrert.</p> : <div className="mt-2 space-y-2">{events.map((event) => { const player = players.find((item) => item.id === event.playerId); const actor = event.side === "opponent" ? match.opponent : player?.name ?? "Ukjent spiller"; const isGoal = event.type === "goal_open" || event.type === "goal_penalty"; return <div key={event.id} role={canRecord && isGoal ? "button" : undefined} tabIndex={canRecord && isGoal ? 0 : undefined} onClick={() => { if (canRecord && isGoal) setSelectedLoggedGoal(event); }} onKeyDown={(keyEvent) => { if (canRecord && isGoal && (keyEvent.key === "Enter" || keyEvent.key === " ")) setSelectedLoggedGoal(event); }} className={`flex min-h-12 items-center justify-between rounded-xl border px-3 py-2 ${event.annulled ? "border-dashed bg-slate-100 opacity-70" : canRecord && isGoal ? "cursor-pointer hover:border-primary hover:bg-red-50/40" : ""}`}><div className="flex min-w-0 items-center gap-2"><span className="w-20 shrink-0 text-xs font-bold text-muted-foreground">{formatEventTime(event.period, event.periodSecond)}</span><span className={`shrink-0 rounded-lg px-2 py-1 text-xs font-bold ${event.annulled ? "bg-slate-400 text-white line-through" : eventInfo[event.type].className}`}>{eventInfo[event.type].short}</span><span className={`truncate text-sm font-medium ${event.annulled ? "line-through" : ""}`}>{actor}</span>{event.annulled && <Badge variant="outline">Annullert</Badge>}</div>{canRecord && !isGoal && <Button aria-label={`Angre ${eventInfo[event.type].label}`} size="icon-sm" variant="ghost" onClick={() => void onDeleteEvent(event.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
-          <div><h3 className="font-bold">Bytter</h3>{substitutions.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen bytter registrert.</p> : <div className="mt-2 space-y-2">{[...substitutions].reverse().map((substitution, index) => { const playerIn = players.find((item) => item.id === substitution.playerInId); const playerOut = players.find((item) => item.id === substitution.playerOutId); return <div key={substitution.id} className="flex min-h-12 items-center justify-between rounded-xl border px-3 py-2"><div className="min-w-0">{substitution.swap ? <p className="truncate text-sm font-semibold"><span className="text-sky-800">Keeperbytte: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"} ↔ {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span></p> : <p className="truncate text-sm font-semibold"><span className="text-emerald-700">Inn: {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span> · <span className="text-primary">Ut: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"}</span></p>}<p className="text-xs text-muted-foreground">{formatEventTime(substitution.period, substitution.periodSecond)} · {substitution.swap ? "Byttet posisjon" : positionLayout[substitution.position]?.label ?? "Posisjon"}</p></div>{canRecord && index === 0 && <Button aria-label="Angre siste bytte" size="icon-sm" variant="ghost" onClick={() => void onDeleteSubstitution(substitution.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
+          <div><h3 className="font-bold">Bytter</h3>{substitutions.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen bytter registrert.</p> : <div className="mt-2 space-y-2">{[...substitutions].reverse().map((substitution, index) => { const playerIn = players.find((item) => item.id === substitution.playerInId); const playerOut = players.find((item) => item.id === substitution.playerOutId); return <div key={substitution.id} className="flex min-h-12 items-center justify-between rounded-xl border px-3 py-2"><div className="min-w-0">{substitution.swap ? <p className="truncate text-sm font-semibold"><span className="text-sky-800">Posisjonsbytte: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"} ↔ {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span></p> : <p className="truncate text-sm font-semibold"><span className="text-emerald-700">Inn: {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span> · <span className="text-primary">Ut: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"}</span></p>}<p className="text-xs text-muted-foreground">{formatEventTime(substitution.period, substitution.periodSecond)} · {substitution.swap ? "Byttet posisjon" : positionLayout[substitution.position]?.label ?? "Posisjon"}</p></div>{canRecord && index === 0 && <Button aria-label="Angre siste bytte" size="icon-sm" variant="ghost" onClick={() => void onDeleteSubstitution(substitution.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
         </section>
       </div>
 
@@ -385,10 +370,17 @@ export function MatchWorkspace({
             <DialogDescription>{activePeriod}. omgang · {formatClock(displayedPeriodSeconds)}. Vinduet lukkes når du velger.</DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-2 px-4 pb-5 sm:grid-cols-3 sm:px-5">
-            {selectedTarget?.side === "ours" && selectedTarget.playerId && currentPositions.get(selectedTarget.playerId) === "bench" && <button type="button" disabled={saving} onClick={() => { setPlayerComingIn(selectedTarget.playerId); setSelectedTarget(null); }} className="col-span-2 min-h-16 rounded-xl bg-sky-700 px-3 py-3 text-sm font-bold text-white transition hover:bg-sky-800 sm:col-span-3"><ArrowLeftRight className="mr-2 inline size-5" /> Bytt inn</button>}
-            {selectedTarget?.side === "ours" && selectedTarget.playerId && currentPositions.get(selectedTarget.playerId) === "goalkeeper" && <button type="button" disabled={saving} onClick={() => { setKeeperChanging(selectedTarget.playerId); setSelectedTarget(null); }} className="col-span-2 min-h-16 rounded-xl bg-sky-700 px-3 py-3 text-sm font-bold text-white transition hover:bg-sky-800 sm:col-span-3"><ArrowLeftRight className="mr-2 inline size-5" /> Bytt keeper</button>}
-            {selectedTarget?.side === "ours" && selectedTarget.playerId && currentPositions.get(selectedTarget.playerId) === "goalkeeper" && goalkeeperEventOrder.map((type) => <button key={type} type="button" disabled={saving} onClick={() => void registerEvent(type)} className={`min-h-16 rounded-xl px-3 py-3 text-sm font-bold transition hover:brightness-95 disabled:opacity-50 ${eventInfo[type].className}`}>{eventInfo[type].label}</button>)}
-            {eventOrder.map((type) => <button key={type} type="button" disabled={saving} onClick={() => void registerEvent(type)} className={`min-h-16 rounded-xl px-3 py-3 text-sm font-bold transition hover:brightness-95 disabled:opacity-50 ${eventInfo[type].className}`}>{eventInfo[type].label}</button>)}
+            {selectedTarget?.side === "ours" && selectedTarget.playerId && currentPositions.get(selectedTarget.playerId) === "bench" ? <button type="button" disabled={saving} onClick={() => { setPlayerChanging(selectedTarget.playerId); setSelectedTarget(null); }} className="col-span-2 min-h-20 rounded-xl bg-sky-700 px-4 py-4 text-base font-black text-white transition hover:bg-sky-800 sm:col-span-3"><ArrowLeftRight className="mr-2 inline size-6" /> Bytt inn</button> : <>
+              {selectedTarget?.side === "ours" && selectedTarget.playerId && currentPositions.get(selectedTarget.playerId) === "goalkeeper" ? <>
+                <button type="button" disabled={saving} onClick={() => void registerEvent("save_open")} className={`col-span-2 min-h-20 rounded-xl px-4 py-4 text-base font-black transition hover:brightness-95 disabled:opacity-50 sm:col-span-3 ${eventInfo.save_open.className}`}>{eventInfo.save_open.label}</button>
+                {goalkeeperEventOrder.filter((type) => type !== "save_open").map((type) => <button key={type} type="button" disabled={saving} onClick={() => void registerEvent(type)} className={`min-h-16 rounded-xl px-3 py-3 text-sm font-bold transition hover:brightness-95 disabled:opacity-50 ${eventInfo[type].className}`}>{eventInfo[type].label}</button>)}
+                {eventOrder.map((type) => <button key={type} type="button" disabled={saving} onClick={() => void registerEvent(type)} className={`min-h-16 rounded-xl px-3 py-3 text-sm font-bold transition hover:brightness-95 disabled:opacity-50 ${eventInfo[type].className}`}>{eventInfo[type].label}</button>)}
+              </> : selectedTarget?.side === "ours" && selectedTarget.playerId ? <>
+                <button type="button" disabled={saving} onClick={() => void registerEvent("goal_open")} className={`col-span-2 min-h-20 rounded-xl px-4 py-4 text-base font-black transition hover:brightness-95 disabled:opacity-50 sm:col-span-3 ${eventInfo.goal_open.className}`}>{eventInfo.goal_open.label}</button>
+                {eventOrder.filter((type) => type !== "goal_open").map((type) => <button key={type} type="button" disabled={saving} onClick={() => void registerEvent(type)} className={`min-h-16 rounded-xl px-3 py-3 text-sm font-bold transition hover:brightness-95 disabled:opacity-50 ${eventInfo[type].className}`}>{eventInfo[type].label}</button>)}
+              </> : eventOrder.map((type) => <button key={type} type="button" disabled={saving} onClick={() => void registerEvent(type)} className={`min-h-16 rounded-xl px-3 py-3 text-sm font-bold transition hover:brightness-95 disabled:opacity-50 ${eventInfo[type].className}`}>{eventInfo[type].label}</button>)}
+              {selectedTarget?.side === "ours" && selectedTarget.playerId && <button type="button" disabled={saving} onClick={() => { setPlayerChanging(selectedTarget.playerId); setSelectedTarget(null); }} className="col-span-2 min-h-20 rounded-xl bg-sky-700 px-4 py-4 text-base font-black text-white transition hover:bg-sky-800 sm:col-span-3"><ArrowLeftRight className="mr-2 inline size-6" /> Bytte</button>}
+            </>}
           </div>
         </DialogContent>
       </Dialog>
@@ -417,15 +409,15 @@ export function MatchWorkspace({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(keeperChanging)} onOpenChange={(isOpen) => { if (!isOpen) setKeeperChanging(null); }}>
+      <Dialog open={Boolean(playerChanging)} onOpenChange={(isOpen) => { if (!isOpen) setPlayerChanging(null); }}>
         <DialogContent className="z-[70] max-h-[88dvh] max-w-xl overflow-y-auto rounded-3xl">
           <DialogHeader>
-            <DialogTitle>Velg ny keeper</DialogTitle>
-            <DialogDescription>Velg en spiller på benken for et vanlig bytte, eller en utespiller på banen for å bytte posisjon.</DialogDescription>
+            <DialogTitle>Velg spiller å bytte med</DialogTitle>
+            <DialogDescription>{playerChanging && currentPositions.get(playerChanging) === "bench" ? "Velg spilleren på banen som skal ut. Innbytteren overtar posisjonen." : "Velg en spiller på benken for et vanlig bytte, eller en spiller på banen for å bytte posisjon."}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <KeeperChoices title="På banen" players={rosterPlayers.filter((player) => player.id !== keeperChanging && (currentPositions.get(player.id) ?? "bench") !== "bench" && !redPlayerIds.has(player.id))} positions={currentPositions} onChoose={(id) => void completeKeeperChange(id)} />
-            <KeeperChoices title="På benken" players={rosterPlayers.filter((player) => player.id !== keeperChanging && (currentPositions.get(player.id) ?? "bench") === "bench" && !redPlayerIds.has(player.id))} positions={currentPositions} onChoose={(id) => void completeKeeperChange(id)} />
+            <PlayerChoices title="På banen" players={rosterPlayers.filter((player) => player.id !== playerChanging && (currentPositions.get(player.id) ?? "bench") !== "bench" && !redPlayerIds.has(player.id))} positions={currentPositions} onChoose={(id) => void completePlayerChange(id)} />
+            {playerChanging && currentPositions.get(playerChanging) !== "bench" && <PlayerChoices title="På benken" players={rosterPlayers.filter((player) => player.id !== playerChanging && (currentPositions.get(player.id) ?? "bench") === "bench" && !redPlayerIds.has(player.id))} positions={currentPositions} onChoose={(id) => void completePlayerChange(id)} />}
           </div>
         </DialogContent>
       </Dialog>
@@ -444,7 +436,7 @@ function CourtPlayerButton({ player, displayName, position, seconds, marks, capt
   </button>;
 }
 
-function KeeperChoices({ title, players, positions, onChoose }: { title: string; players: Player[]; positions: Map<number, Position>; onChoose: (id: number) => void }) {
+function PlayerChoices({ title, players, positions, onChoose }: { title: string; players: Player[]; positions: Map<number, Position>; onChoose: (id: number) => void }) {
   return <section><h3 className="mb-2 text-sm font-bold text-muted-foreground">{title}</h3>{players.length === 0 ? <p className="rounded-xl border border-dashed p-3 text-sm text-muted-foreground">Ingen tilgjengelige spillere.</p> : <div className="grid gap-2 sm:grid-cols-2">{players.map((player) => { const position = positions.get(player.id) ?? "bench"; return <button key={player.id} type="button" onClick={() => onChoose(player.id)} className="rounded-xl border bg-white p-3 text-left transition hover:border-primary hover:bg-red-50/40"><span className="block font-bold">{playerLabel(player)}</span><span className="text-xs text-muted-foreground">{position === "bench" ? "Benk" : positionLayout[position]?.label ?? "På banen"}</span></button>; })}</div>}</section>;
 }
 

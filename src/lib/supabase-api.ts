@@ -128,7 +128,7 @@ export async function fetchTrainingObservations<T>(accessToken: string): Promise
 export async function applyAction(accessToken: string, payload: Record<string, unknown>) {
   const cupActions = new Set(["saveCup", "saveCupRosters", "saveCupMatch", "deleteCup"]);
   const matchEnhancementActions = new Set(["setEventAnnulled", "swapKeeper", "addMatchComment", "deleteMatchComment"]);
-  const rpcName = payload.action === "saveTrainingObservation" ? "save_training_observation" : payload.action === "changeGoalScorer" ? "change_goal_scorer_action" : matchEnhancementActions.has(String(payload.action)) ? "match_enhancement_action" : cupActions.has(String(payload.action)) ? "cup_action" : "season_action";
+  const rpcName = payload.action === "saveTrainingObservation" ? "save_training_observation" : payload.action === "changeGoalScorer" ? "change_goal_scorer_action" : payload.action === "swapPlayers" ? "swap_match_players_action" : matchEnhancementActions.has(String(payload.action)) ? "match_enhancement_action" : cupActions.has(String(payload.action)) ? "cup_action" : "season_action";
   return jsonRequest(`/rest/v1/rpc/${rpcName}`, {
     method: "POST", body: JSON.stringify({ payload }),
   }, accessToken);

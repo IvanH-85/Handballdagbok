@@ -527,7 +527,7 @@ export function SeasonApp() {
           onSetEventAnnulled={(eventId, annulled) => runAction({ action: "setEventAnnulled", eventId, annulled }, annulled ? "Målet er annullert." : "Målet er gjenopprettet.")}
           onChangeGoalScorer={(eventId, playerId) => runAction({ action: "changeGoalScorer", eventId, playerId }, "Målscoreren er endret.")}
           onSubstitution={(playerInId, playerOutId, matchSecond, period, periodSecond) => runAction({ action: "addSubstitution", matchId: activeMatch.id, playerInId, playerOutId, matchSecond, period, periodSecond }, "Byttet er registrert.")}
-          onSwapKeeper={(goalkeeperId, playerId, matchSecond, period, periodSecond) => runAction({ action: "swapKeeper", matchId: activeMatch.id, goalkeeperId, playerId, matchSecond, period, periodSecond }, "Keeperbyttet er registrert.")}
+          onSwapPlayers={(playerOutId, playerInId, matchSecond, period, periodSecond) => runAction({ action: "swapPlayers", matchId: activeMatch.id, playerOutId, playerInId, matchSecond, period, periodSecond }, "Posisjonsbyttet er registrert.")}
           onDeleteSubstitution={(id) => runAction({ action: "deleteSubstitution", id }, "Det siste byttet er angret.")}
           onAddComment={(body, visibility) => runAction({ action: "addMatchComment", matchId: activeMatch.id, body, visibility }, visibility === "public" ? "Kommentaren er publisert til foresatte." : "Det interne notatet er lagret.")}
           onDeleteComment={(id) => runAction({ action: "deleteMatchComment", id }, "Kommentaren er slettet.")}
