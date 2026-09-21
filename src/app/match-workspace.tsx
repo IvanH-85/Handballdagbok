@@ -377,6 +377,8 @@ export function MatchWorkspace({
 
         {canRecord && <section className="rounded-2xl border p-4"><h3 className="flex items-center gap-2 font-bold"><LockKeyhole className="size-5" /> Internt kampnotat</h3><p className="mt-1 text-xs text-muted-foreground">Samlet trenernotat. Dette vises bare for administrator og kampregistrator.</p><Textarea className="mt-3 min-h-24" aria-label="Internt kampnotat" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Kommentarer og læringspunkter" /><Button className="mt-3" disabled={saving} onClick={() => void onSave({ ...match, notes, roster: rosterPayload })}>{saving ? "Lagrer …" : "Lagre internt kampnotat"}</Button></section>}
 
+        {showPositionStats && match.status === "completed" && <MatchMomentum match={match} players={players} roster={roster} events={events} substitutions={substitutions} />}
+
         <section className="grid gap-4 lg:grid-cols-2">
           <div><h3 className="font-bold">Hendelseslogg</h3>{events.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen hendelser registrert.</p> : <div className="mt-2 space-y-2">{events.map((event) => { const player = players.find((item) => item.id === event.playerId); const actor = event.side === "opponent" ? match.opponent : player?.name ?? "Ukjent spiller"; const isGoal = event.type === "goal_open" || event.type === "goal_penalty"; return <div key={event.id} role={canRecord && isGoal ? "button" : undefined} tabIndex={canRecord && isGoal ? 0 : undefined} onClick={() => { if (canRecord && isGoal) setSelectedLoggedGoal(event); }} onKeyDown={(keyEvent) => { if (canRecord && isGoal && (keyEvent.key === "Enter" || keyEvent.key === " ")) setSelectedLoggedGoal(event); }} className={`flex min-h-12 items-center justify-between rounded-xl border px-3 py-2 ${event.annulled ? "border-dashed bg-slate-100 opacity-70" : canRecord && isGoal ? "cursor-pointer hover:border-primary hover:bg-red-50/40" : ""}`}><div className="flex min-w-0 items-center gap-2"><span className="w-20 shrink-0 text-xs font-bold text-muted-foreground">{formatEventTime(event.period, event.periodSecond)}</span><span className={`shrink-0 rounded-lg px-2 py-1 text-xs font-bold ${event.annulled ? "bg-slate-400 text-white line-through" : eventInfo[event.type].className}`}>{eventInfo[event.type].short}</span><span className={`truncate text-sm font-medium ${event.annulled ? "line-through" : ""}`}>{actor}</span>{event.annulled && <Badge variant="outline">Annullert</Badge>}</div>{canRecord && !isGoal && <Button aria-label={`Angre ${eventInfo[event.type].label}`} size="icon-sm" variant="ghost" onClick={() => void onDeleteEvent(event.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
           <div><h3 className="font-bold">Bytter</h3>{substitutions.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Ingen bytter registrert.</p> : <div className="mt-2 space-y-2">{[...substitutions].reverse().map((substitution, index) => { const playerIn = players.find((item) => item.id === substitution.playerInId); const playerOut = players.find((item) => item.id === substitution.playerOutId); return <div key={substitution.id} className="flex min-h-12 items-center justify-between rounded-xl border px-3 py-2"><div className="min-w-0">{substitution.swap ? <p className="truncate text-sm font-semibold"><span className="text-sky-800">Posisjonsbytte: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"} ↔ {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span></p> : <p className="truncate text-sm font-semibold"><span className="text-emerald-700">Inn: {playerIn ? compactName(playerIn.name, rosterPlayers) : "Ukjent"}</span> · <span className="text-primary">Ut: {playerOut ? compactName(playerOut.name, rosterPlayers) : "Ukjent"}</span></p>}<p className="text-xs text-muted-foreground">{formatEventTime(substitution.period, substitution.periodSecond)} · {substitution.swap ? "Byttet posisjon" : positionLayout[substitution.position]?.label ?? "Posisjon"}</p></div>{canRecord && index === 0 && <Button aria-label="Angre siste bytte" size="icon-sm" variant="ghost" onClick={() => void onDeleteSubstitution(substitution.id)}><RotateCcw /></Button>}</div>; })}</div>}</div>
@@ -442,6 +444,53 @@ export function MatchWorkspace({
 
     </DialogContent>
   </Dialog>;
+}
+
+function MatchMomentum({ match, players, roster, events, substitutions }: { match: Match; players: Player[]; roster: MatchPlayer[]; events: MatchEvent[]; substitutions: MatchSubstitution[] }) {
+  const matchEnd = Math.max(0, Number(match.elapsedSeconds || match.periodCount * match.periodMinutes * 60));
+  const periodSeconds = Math.max(60, Number(match.periodMinutes || 20) * 60);
+  const goalEvents = events.filter((event) => !event.annulled && (event.type === "goal_open" || event.type === "goal_penalty")).sort((a, b) => a.matchSecond - b.matchSecond || a.id - b.id);
+  const segments: Array<{ start: number; end: number; period: number; label: string }> = [];
+  for (let period = 1; period <= Math.max(1, match.periodCount || 2); period += 1) {
+    const periodStart = (period - 1) * periodSeconds;
+    if (periodStart >= matchEnd) break;
+    const periodEnd = Math.min(matchEnd, periodStart + periodSeconds);
+    for (let start = periodStart; start < periodEnd; start += 300) {
+      const end = Math.min(periodEnd, start + 300);
+      const localStart = start - periodStart;
+      const localEnd = end - periodStart;
+      segments.push({ start, end, period, label: `${period}. omg ${Math.floor(localStart / 60)}–${Math.ceil(localEnd / 60)} min` });
+    }
+  }
+  let cumulativeOur = 0;
+  let cumulativeOpponent = 0;
+  const segmentRows = segments.map((segment, segmentIndex) => {
+    const segmentGoals = goalEvents.filter((event) => event.matchSecond >= segment.start && (segmentIndex === segments.length - 1 ? event.matchSecond <= segment.end : event.matchSecond < segment.end));
+    const ourGoals = segmentGoals.filter((event) => event.side === "ours").length;
+    const opponentGoals = segmentGoals.filter((event) => event.side === "opponent").length;
+    cumulativeOur += ourGoals;
+    cumulativeOpponent += opponentGoals;
+    const difference = ourGoals - opponentGoals;
+    const positions = positionsAtSecond(roster, substitutions, Math.max(segment.start, segment.end - 1));
+    const lineup = [...positions.entries()].filter(([, position]) => position !== "bench").map(([playerId, position]) => ({ player: players.find((player) => player.id === playerId), position: position as CourtPosition })).filter((entry) => Boolean(entry.player));
+    const changes = substitutions.filter((entry) => entry.matchSecond >= segment.start && (segmentIndex === segments.length - 1 ? entry.matchSecond <= segment.end : entry.matchSecond < segment.end)).length;
+    return { ...segment, ourGoals, opponentGoals, difference, cumulativeOur, cumulativeOpponent, lineup, changes };
+  });
+  const tone = (difference: number) => difference > 0 ? { label: "God periode", bar: "bg-emerald-500", card: "border-emerald-200 bg-emerald-50/70", text: "text-emerald-800" } : difference < 0 ? { label: "Motstanderens periode", bar: "bg-red-500", card: "border-red-200 bg-red-50/70", text: "text-red-800" } : { label: "Jevn periode", bar: "bg-amber-400", card: "border-amber-200 bg-amber-50/60", text: "text-amber-900" };
+
+  return <section className="rounded-2xl border p-4"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">Kun for administratorer</p><h3 className="mt-1 font-black">Kampens utvikling</h3><p className="mt-1 text-sm text-muted-foreground">Kampen er delt i femminuttersperioder. Fargene viser hvem som scoret flest mål i hver periode.</p></div>{segmentRows.length === 0 ? <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Det finnes ikke nok tidsdata til å vise kampforløpet.</p> : <><div className="mt-4 flex overflow-hidden rounded-xl border">{segmentRows.map((segment) => { const style = tone(segment.difference); return <div key={`${segment.period}-${segment.start}`} title={`${segment.label}: ${segment.ourGoals}–${segment.opponentGoals}`} className={`min-w-12 flex-1 px-1 py-3 text-center text-xs font-black text-white ${style.bar}`}>{segment.ourGoals}–{segment.opponentGoals}</div>; })}</div><div className="mt-4 grid gap-3 md:grid-cols-2">{segmentRows.map((segment) => { const style = tone(segment.difference); return <article key={`${segment.period}-${segment.start}`} className={`rounded-xl border p-3 ${style.card}`}><div className="flex items-start justify-between gap-3"><div><p className={`text-xs font-black uppercase tracking-wider ${style.text}`}>{style.label}</p><p className="mt-1 font-bold">{segment.label}</p></div><div className="text-right"><p className="text-xl font-black">{segment.ourGoals}–{segment.opponentGoals}</p><p className="text-xs text-muted-foreground">Stilling {segment.cumulativeOur}–{segment.cumulativeOpponent}</p></div></div><p className="mt-2 text-xs text-muted-foreground">{segment.changes ? `${segment.changes} ${segment.changes === 1 ? "bytte" : "bytter"} i perioden` : "Ingen bytter i perioden"}</p><div className="mt-2 flex flex-wrap gap-1">{segment.lineup.map((entry) => <Badge key={`${entry.player?.id}-${entry.position}`} variant="outline" className="bg-white/80">{entry.player ? compactName(entry.player.name, players) : "Ukjent"} · {positionLayout[entry.position].label}</Badge>)}</div></article>; })}</div></>}
+    <p className="mt-4 text-xs leading-5 text-muted-foreground">Spillerne som vises er oppstillingen ved slutten av perioden. Oversikten avhenger av at mål og bytter registreres med riktig tidspunkt.</p>
+  </section>;
+}
+
+function positionsAtSecond(roster: MatchPlayer[], substitutions: MatchSubstitution[], second: number) {
+  const positions = new Map(normalizeInitialPositions(roster));
+  for (const substitution of [...substitutions].sort((a, b) => a.matchSecond - b.matchSecond || a.id - b.id)) {
+    if (substitution.matchSecond > second) break;
+    positions.set(substitution.playerOutId, substitution.swap ? substitution.playerInPreviousPosition ?? "bench" : "bench");
+    positions.set(substitution.playerInId, substitution.position);
+  }
+  return positions;
 }
 
 type DisciplineMarks = { yellow: boolean; twoMinutes: number; red: boolean };
