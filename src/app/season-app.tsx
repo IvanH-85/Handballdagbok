@@ -85,7 +85,7 @@ type CupTeamPlayer = { cupId: number; cupTeamId: number; playerId: number };
 type PlayerGuardian = { playerId: number; userId: number };
 type CupMatchLink = { matchId: number; cupId: number; cupTeamId: number };
 type CupData = { cups: Cup[]; cupTeams: CupTeam[]; cupTeamPlayers: CupTeamPlayer[]; playerGuardians: PlayerGuardian[]; cupMatchLinks: CupMatchLink[] };
-type LiveMatchData = { match: Match; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[] };
+type LiveMatchData = { match: Match; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[] };
 type MatchEnhancements = { matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; matchComments: MatchComment[] };
 type CloudStorageStatus = { provider: string; configured: boolean; mode: "prepared" };
 type SeasonData = { players: Player[]; trainings: Training[]; attendance: Attendance[]; exercises: Exercise[]; trainingExercises: TrainingExercise[]; trainingObservations: TrainingObservation[]; matches: Match[]; matchPlayers: MatchPlayer[]; matchEvents: MatchEvent[]; matchSubstitutions: MatchSubstitution[]; matchComments: MatchComment[]; appUsers: AppUser[]; userLoginStats: UserLoginStat[]; matchRegistrars: MatchRegistrar[]; cups: Cup[]; cupTeams: CupTeam[]; cupTeamPlayers: CupTeamPlayer[]; playerGuardians: PlayerGuardian[]; cupMatchLinks: CupMatchLink[]; seriesTable: SeriesTableData | null; currentUser: CurrentUser | null; cloudStorage: CloudStorageStatus };
@@ -265,6 +265,7 @@ export function SeasonApp() {
         setData((current) => ({
           ...current,
           matches: current.matches.map((match) => match.id === activeMatchId ? live.match : match),
+          matchPlayers: [...current.matchPlayers.filter((entry) => entry.matchId !== activeMatchId), ...live.matchPlayers],
           matchEvents: [...current.matchEvents.filter((event) => event.matchId !== activeMatchId), ...enhancements.matchEvents],
           matchSubstitutions: [...current.matchSubstitutions.filter((entry) => entry.matchId !== activeMatchId), ...enhancements.matchSubstitutions],
           matchComments: [...current.matchComments.filter((entry) => entry.matchId !== activeMatchId), ...enhancements.matchComments],
@@ -290,6 +291,48 @@ export function SeasonApp() {
     // Tilgangstokenet hentes fra sessionRef slik at intervallet ikke må opprettes på nytt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMatchId, authSession]);
+
+  useEffect(() => {
+    if (!authSession || (!activeCupId && !matchFormOpen)) return;
+    let cancelled = false;
+    let requestInFlight = false;
+    const syncPlanning = async () => {
+      if (cancelled || requestInFlight || document.visibilityState === "hidden") return;
+      requestInFlight = true;
+      try {
+        const token = await getAccessToken();
+        const [snapshot, cupSnapshot] = await Promise.all([
+          fetchSnapshot<Partial<SeasonData>>(token),
+          fetchCupSnapshot<CupData>(token),
+        ]);
+        if (cancelled) return;
+        setData((current) => ({
+          ...current,
+          players: snapshot.players ?? current.players,
+          matches: snapshot.matches ?? current.matches,
+          matchPlayers: snapshot.matchPlayers ?? current.matchPlayers,
+          matchRegistrars: snapshot.matchRegistrars ?? current.matchRegistrars,
+          ...cupSnapshot,
+        }));
+      } catch {
+        // Behold siste kjente plan ved et kort nettverksbrudd.
+      } finally {
+        requestInFlight = false;
+      }
+    };
+    const syncWhenVisible = () => { if (document.visibilityState === "visible") void syncPlanning(); };
+    const interval = window.setInterval(() => void syncPlanning(), 3_000);
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    window.addEventListener("focus", syncWhenVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+      window.removeEventListener("focus", syncWhenVisible);
+    };
+    // Tilgangstokenet hentes fra sessionRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCupId, matchFormOpen, authSession]);
 
   async function refresh(showLoading = false) {
     if (showLoading) setLoading(true);
@@ -1170,13 +1213,13 @@ function CupFormDialog({ open, saving, cup, teams, onOpenChange, onSave }: { ope
 
 function CupWorkspaceDialog({ open, saving, isAdmin, cup, data, canRecordMatch, onOpenChange, onEditCup, onAddMatch, onEditMatch, onOpenMatch, onDeleteMatch, onStatus, onSaveRosters, onDeleteCup }: { open: boolean; saving: boolean; isAdmin: boolean; cup: Cup; data: SeasonData; canRecordMatch: (matchId: number) => boolean; onOpenChange: (open: boolean) => void; onEditCup: (cup: Cup) => void; onAddMatch: (cup: Cup, team: CupTeam) => void; onEditMatch: (match: Match) => void; onOpenMatch: (id: number) => void; onDeleteMatch: (id: number) => Promise<boolean>; onStatus: (id: number, status: "planned" | "cancelled") => Promise<boolean>; onSaveRosters: (assignments: Array<{ playerId: number; cupTeamId: number }>) => Promise<boolean>; onDeleteCup: () => Promise<void> }) {
   const teams = data.cupTeams.filter((team) => team.cupId === cup.id).sort((a, b) => a.sortOrder - b.sortOrder);
-  const initialAssignments = Object.fromEntries(data.cupTeamPlayers.filter((entry) => entry.cupId === cup.id).map((entry) => [entry.playerId, entry.cupTeamId]));
-  const [assignments, setAssignments] = useState<Record<number, number>>(initialAssignments);
+  const initialAssignments = data.cupTeamPlayers.filter((entry) => entry.cupId === cup.id).reduce<Record<number, number[]>>((result, entry) => ({ ...result, [entry.playerId]: [...(result[entry.playerId] ?? []), entry.cupTeamId] }), {});
+  const [assignments, setAssignments] = useState<Record<number, number[]>>(initialAssignments);
   const links = data.cupMatchLinks.filter((link) => link.cupId === cup.id);
   const cupMatches = data.matches.filter((match) => links.some((link) => link.matchId === match.id));
   const actions: MatchListActions = { data, onEdit: onEditMatch, onOpen: onOpenMatch, onDelete: onDeleteMatch, onStatus, isAdmin, canRecordMatch };
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[94dvh] overflow-y-auto sm:max-w-5xl"><DialogHeader><DialogTitle>{cup.name}</DialogTitle><DialogDescription>{formatCupDates(cup)}{cup.venue ? ` · ${cup.venue}` : ""} · {cup.periodCount} × {cup.periodMinutes} min</DialogDescription></DialogHeader>{isAdmin && <><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => onEditCup(cup)}><Pencil /> Rediger cup</Button><AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="ghost" className="text-destructive"><Trash2 /> Slett cup</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Slett {cup.name}?</AlertDialogTitle><AlertDialogDescription>Cupen, lagene og alle kampene som er lagt inn under cupen slettes. Dette kan ikke angres.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Avbryt</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => void onDeleteCup()}>Slett cup</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
-    <section className="mt-5 rounded-2xl border bg-slate-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-black">Fordel spillerne på lag</h3><p className="mt-1 text-sm text-muted-foreground">Hver spiller kan tilhøre ett lag i denne cupen. Dette blir standard laguttak når kampene legges inn.</p></div><Button size="sm" disabled={saving} onClick={() => void onSaveRosters(Object.entries(assignments).filter(([, teamId]) => teamId).map(([playerId, cupTeamId]) => ({ playerId: Number(playerId), cupTeamId })))}>{saving ? "Lagrer …" : "Lagre lagfordeling"}</Button></div><div className="mt-4 grid gap-2 sm:grid-cols-2">{data.players.filter((player) => Boolean(player.active)).map((player) => <div key={player.id} className="grid grid-cols-[1fr_130px] items-center gap-2 rounded-xl border bg-white p-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">{player.jerseyNumber ? `#${player.jerseyNumber} · ` : ""}{player.name}</p><p className="truncate text-xs text-muted-foreground">{guardianNames(player.id, data)}</p></div><Select value={assignments[player.id] ? String(assignments[player.id]) : "none"} onValueChange={(value) => setAssignments((current) => { const next = { ...current }; if (value === "none") delete next[player.id]; else next[player.id] = Number(value); return next; })}><SelectTrigger aria-label={`Velg cuplag for ${player.name}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Ikke med</SelectItem>{teams.map((team) => <SelectItem key={team.id} value={String(team.id)}>{team.name}</SelectItem>)}</SelectContent></Select></div>)}</div></section></>}
+    <section className="mt-5 rounded-2xl border bg-slate-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-black">Fordel spillerne på lag</h3><p className="mt-1 text-sm text-muted-foreground">Velg ett eller flere lag per spiller. Ekstra innbyttere kan registreres på begge lag. Endringer overføres automatisk til alle planlagte kamper.</p></div><Button size="sm" disabled={saving} onClick={() => void onSaveRosters(Object.entries(assignments).flatMap(([playerId, teamIds]) => teamIds.map((cupTeamId) => ({ playerId: Number(playerId), cupTeamId }))))}>{saving ? "Lagrer …" : "Lagre lagfordeling"}</Button></div><div className="mt-4 grid gap-2 sm:grid-cols-2">{data.players.filter((player) => Boolean(player.active)).map((player) => { const selectedTeams = assignments[player.id] ?? []; return <div key={player.id} className="rounded-xl border bg-white p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{player.jerseyNumber ? `#${player.jerseyNumber} · ` : ""}{player.name}</p><p className="truncate text-xs text-muted-foreground">{guardianNames(player.id, data)}</p></div><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => setAssignments((current) => { const next = { ...current }; delete next[player.id]; return next; })} className={`min-h-9 rounded-lg border px-3 text-xs font-bold ${selectedTeams.length === 0 ? "border-slate-700 bg-slate-100 text-slate-900" : "bg-white text-muted-foreground"}`}>Ikke med</button>{teams.map((team) => { const selected = selectedTeams.includes(team.id); return <button key={team.id} type="button" aria-pressed={selected} onClick={() => setAssignments((current) => { const currentTeams = current[player.id] ?? []; const nextTeams = selected ? currentTeams.filter((id) => id !== team.id) : [...currentTeams, team.id]; const next = { ...current }; if (nextTeams.length) next[player.id] = nextTeams; else delete next[player.id]; return next; })} className={`min-h-9 rounded-lg border px-3 text-xs font-bold ${selected ? "border-primary bg-primary text-primary-foreground" : "bg-white hover:border-primary"}`}>{team.name}</button>; })}</div></div>; })}</div></section></>}
     <section className="mt-5"><h3 className="text-lg font-black">Lag og kamper</h3><div className="mt-3 space-y-5">{teams.map((team) => { const teamPlayers = data.cupTeamPlayers.filter((entry) => entry.cupTeamId === team.id).map((entry) => data.players.find((player) => player.id === entry.playerId)).filter(Boolean) as Player[]; const teamMatchIds = new Set(links.filter((link) => link.cupTeamId === team.id).map((link) => link.matchId)); const teamMatches = cupMatches.filter((match) => teamMatchIds.has(match.id)); return <div key={team.id} className="rounded-2xl border p-3 sm:p-4"><div className="mb-3 flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-black">{team.name}</h4><p className="mt-1 text-sm text-muted-foreground">{teamPlayers.length ? teamPlayers.map((player) => shortPlayerName(player.name)).join(", ") : "Ingen spillere valgt ennå"}</p></div>{isAdmin && <Button size="sm" disabled={!teamPlayers.length} onClick={() => onAddMatch(cup, team)}><Plus /> Legg til kamp</Button>}</div><MatchGrid matches={teamMatches} emptyText="Ingen kamper lagt inn for laget ennå." {...actions} /></div>; })}</div></section>
   </DialogContent></Dialog>;
 }
@@ -1207,6 +1250,22 @@ function MatchFormDialog({ open, saving, match, matches, players: allPlayers, ma
       return { playerId: entry.playerId, position, starter: position !== "bench", goalkeeper: position === "goalkeeper", captain: Boolean(entry.captain) };
     });
   });
+  const linkedTeamPlayerSignature = [...linkedTeamPlayerIds].sort((a, b) => a - b).join(",");
+  const previousLinkedTeamPlayerIds = useRef(new Set(linkedTeamPlayerIds));
+  useEffect(() => {
+    if (!linkedTeam) return;
+    const previous = previousLinkedTeamPlayerIds.current;
+    setRoster((current) => {
+      const next = current.filter((entry) => linkedTeamPlayerIds.has(entry.playerId));
+      for (const playerId of linkedTeamPlayerIds) {
+        if (!previous.has(playerId) && !next.some((entry) => entry.playerId === playerId)) next.push({ playerId, starter: false, goalkeeper: false, captain: false, position: "bench" });
+      }
+      return next;
+    });
+    previousLinkedTeamPlayerIds.current = new Set(linkedTeamPlayerIds);
+    // Signature tracks the actual player IDs rather than the Set identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedTeamPlayerSignature]);
   function selectPlayer(playerId: number, checked: boolean) {
     setRoster((current) => checked ? current.some((entry) => entry.playerId === playerId) ? current : [...current, { playerId, starter: false, goalkeeper: false, captain: false, position: "bench" }] : current.filter((entry) => entry.playerId !== playerId));
   }
