@@ -1185,6 +1185,7 @@ function MatchFormDialog({ open, saving, match, matches, players: allPlayers, ma
   const matchCupLink = match ? cupMatchLinks.find((link) => link.matchId === match.id) ?? null : null;
   const linkedCup = cupContext?.cup ?? cups.find((cup) => cup.id === matchCupLink?.cupId) ?? null;
   const linkedTeam = cupContext?.team ?? cupTeams.find((team) => team.id === matchCupLink?.cupTeamId) ?? null;
+  const linkedTeamPlayerIds = new Set(linkedTeam ? cupTeamPlayers.filter((entry) => entry.cupTeamId === linkedTeam.id).map((entry) => entry.playerId) : []);
   const [date, setDate] = useState(match?.date ?? linkedCup?.startDate ?? "");
   const [startTime, setStartTime] = useState(match?.startTime ?? "");
   const [opponent, setOpponent] = useState(match?.opponent ?? "");
@@ -1199,7 +1200,7 @@ function MatchFormDialog({ open, saving, match, matches, players: allPlayers, ma
   const [positionMenuPlayerId, setPositionMenuPlayerId] = useState<number | null>(null);
   const [roster, setRoster] = useState<RosterEntry[]>(() => {
     if (!match) return linkedTeam ? cupTeamPlayers.filter((entry) => entry.cupTeamId === linkedTeam.id).map((entry) => ({ playerId: entry.playerId, starter: false, goalkeeper: false, captain: false, position: "bench" as Position })) : [];
-    const entries = matchPlayers.filter((entry) => entry.matchId === match.id);
+    const entries = matchPlayers.filter((entry) => entry.matchId === match.id && (!linkedTeam || linkedTeamPlayerIds.has(entry.playerId)));
     const positions = normalizeMatchPositions(entries);
     return entries.map((entry) => {
       const position = positions.get(entry.playerId) ?? "bench";
@@ -1224,7 +1225,7 @@ function MatchFormDialog({ open, saving, match, matches, players: allPlayers, ma
   function chooseCaptain(playerId: number) {
     setRoster((current) => current.map((entry) => ({ ...entry, captain: entry.playerId === playerId ? !entry.captain : false })));
   }
-  const availablePlayerIds = new Set(linkedTeam ? cupTeamPlayers.filter((entry) => entry.cupTeamId === linkedTeam.id).map((entry) => entry.playerId) : allPlayers.map((player) => player.id));
+  const availablePlayerIds = linkedTeam ? linkedTeamPlayerIds : new Set(allPlayers.map((player) => player.id));
   const eligibleGuardianIds = new Set(playerGuardians.filter((entry) => availablePlayerIds.has(entry.playerId)).map((entry) => entry.userId));
   const registrars = users.filter((user) => user.role === "parent" && Boolean(user.active) && (!linkedTeam || eligibleGuardianIds.has(user.id))).sort((a, b) => a.name.localeCompare(b.name, "nb-NO"));
   const players = linkedTeam ? allPlayers.filter((player) => availablePlayerIds.has(player.id)) : allPlayers;
