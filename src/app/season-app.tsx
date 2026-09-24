@@ -497,7 +497,7 @@ export function SeasonApp() {
         playerGuardians={data.playerGuardians}
         onOpenChange={(open) => { setMatchFormOpen(open); if (!open) { setCupMatchContext(null); setReturnToCupId(null); } }}
         onSave={async (payload) => {
-          const action = !editingMatch && payload.cupId ? "saveCupMatch" : "saveMatch";
+          const action = payload.cupId ? "saveCupMatch" : "saveMatch";
           const ok = await runAction({ action, ...payload }, editingMatch ? "Kampen er oppdatert." : "Kampen er lagt til.");
           if (ok) {
             setMatchFormOpen(false);
