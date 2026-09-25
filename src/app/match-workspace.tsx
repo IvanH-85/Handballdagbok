@@ -158,6 +158,7 @@ export function MatchWorkspace({
   const periodLimitSeconds = Math.max(60, Number(match.periodMinutes || 20) * 60);
   const displayedPeriodSeconds = Math.min(periodClockSeconds, periodLimitSeconds);
   const activePeriod = match.currentPeriod === 2 || match.matchPhase === "second_half" ? 2 : 1;
+  const singlePeriodMatch = Number(match.periodCount) === 1;
 
   useEffect(() => {
     if (!canRecord || !Boolean(match.clockRunning) || periodClockSeconds < periodLimitSeconds) return;
@@ -166,9 +167,9 @@ export function MatchWorkspace({
     if (autoStopKey.current === transitionKey) return;
     autoStopKey.current = transitionKey;
     const cappedTotal = Math.max(0, clockSeconds - Math.max(0, periodClockSeconds - periodLimitSeconds));
-    const transition = match.matchPhase === "first_half" ? onClock("finish_period", cappedTotal, periodLimitSeconds) : onComplete(cappedTotal, periodLimitSeconds);
+    const transition = match.matchPhase === "first_half" && !singlePeriodMatch ? onClock("finish_period", cappedTotal, periodLimitSeconds) : onComplete(cappedTotal, periodLimitSeconds);
     void transition.then((ok) => { if (!ok) autoStopKey.current = ""; });
-  }, [canRecord, clockSeconds, match.clockRunning, match.clockStartedAt, match.id, match.matchPhase, onClock, onComplete, periodClockSeconds, periodLimitSeconds]);
+  }, [canRecord, clockSeconds, match.clockRunning, match.clockStartedAt, match.id, match.matchPhase, onClock, onComplete, periodClockSeconds, periodLimitSeconds, singlePeriodMatch]);
 
   const initialPositions = useMemo(() => normalizeInitialPositions(roster), [roster]);
   const currentPositions = useMemo(() => {
@@ -273,7 +274,7 @@ export function MatchWorkspace({
   const changingPlayerPosition = playerChanging !== null ? currentPositions.get(playerChanging) ?? "bench" : null;
   const phase = match.status === "completed" ? "completed" : match.matchPhase || (match.currentPeriod === 2 ? "second_half" : match.currentPeriod === 1 ? "first_half" : "pre_match");
   const clockIsRunning = Boolean(match.clockRunning) && displayedPeriodSeconds < periodLimitSeconds;
-  const phaseLabel = phase === "halftime" ? "Pause" : phase === "second_half" ? "2. omgang" : phase === "first_half" ? "1. omgang" : phase === "completed" ? "Kampen er ferdig" : "Ikke startet";
+  const phaseLabel = phase === "halftime" ? (singlePeriodMatch ? "1. omgang ferdig" : "Pause") : phase === "second_half" ? "2. omgang" : phase === "first_half" ? "1. omgang" : phase === "completed" ? "Kampen er ferdig" : "Ikke startet";
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="h-[96dvh] max-h-[96dvh] overflow-y-auto p-4 sm:max-w-5xl sm:p-6">
@@ -294,20 +295,20 @@ export function MatchWorkspace({
             <div className="min-w-24">
               <p className="text-xs font-bold uppercase tracking-wider text-red-100">{phaseLabel}</p>
               <p className="mt-1 font-mono text-2xl font-black tabular-nums sm:text-3xl">{formatClock(displayedPeriodSeconds)}</p>
-              <p className="mt-1 text-xs text-red-100">{clockIsRunning ? "Klokken går" : phase === "halftime" ? "Klar for andre omgang" : phase === "first_half" || phase === "second_half" ? "Klokken er pauset" : `${match.periodCount || 2} × ${match.periodMinutes || 20} min`}</p>
+              <p className="mt-1 text-xs text-red-100">{clockIsRunning ? "Klokken går" : phase === "halftime" ? (singlePeriodMatch ? "Klar til å avslutte kampen" : "Klar for andre omgang") : phase === "first_half" || phase === "second_half" ? "Klokken er pauset" : `${match.periodCount || 2} × ${match.periodMinutes || 20} min`}</p>
             </div>
             <div><p className="text-sm font-bold leading-tight sm:text-lg">{awayTeam}</p><p className="mt-1 text-5xl font-black tabular-nums">{awayScore}</p></div>
           </div>
           {canRecord && <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
             {phase === "pre_match" && <Button className="min-w-40 bg-white text-primary hover:bg-red-50" disabled={saving} onClick={() => void onClock("start_first", 0, 0, new Date().toISOString())}><Play /> Start 1. omgang</Button>}
             {(phase === "first_half" || phase === "second_half") && <Button className="min-w-32 bg-white text-primary hover:bg-red-50" disabled={saving} onClick={() => clockIsRunning ? void onClock("pause", clockSeconds, displayedPeriodSeconds) : void onClock("start", clockSeconds, displayedPeriodSeconds, new Date().toISOString())}>{clockIsRunning ? <><Pause /> Pause</> : <><Play /> Fortsett</>}</Button>}
-            {phase === "first_half" && <Button className="min-w-44 border-amber-300 bg-amber-400 text-slate-950 hover:bg-amber-300 hover:text-slate-950" disabled={saving} variant="outline" onClick={() => void onClock("finish_period", clockSeconds, displayedPeriodSeconds)}><Flag /> 1. omgang ferdig</Button>}
-            {phase === "halftime" && <Button className="min-w-40 bg-white text-primary hover:bg-red-50" disabled={saving} onClick={() => void onClock("start_second", clockSeconds, 0, new Date().toISOString())}><Play /> Start 2. omgang</Button>}
+            {phase === "first_half" && !singlePeriodMatch && <Button className="min-w-44 border-amber-300 bg-amber-400 text-slate-950 hover:bg-amber-300 hover:text-slate-950" disabled={saving} variant="outline" onClick={() => void onClock("finish_period", clockSeconds, displayedPeriodSeconds)}><Flag /> 1. omgang ferdig</Button>}
+            {phase === "halftime" && !singlePeriodMatch && <Button className="min-w-40 bg-white text-primary hover:bg-red-50" disabled={saving} onClick={() => void onClock("start_second", clockSeconds, 0, new Date().toISOString())}><Play /> Start 2. omgang</Button>}
             {(phase === "pre_match" || phase === "first_half") && !Boolean(match.clockRunning) && clockSeconds > 0 && events.length === 0 && substitutions.length === 0 && <AlertDialog>
               <AlertDialogTrigger asChild><Button className="border-white/30 text-white hover:bg-white/10 hover:text-white" variant="outline"><TimerReset /> Nullstill</Button></AlertDialogTrigger>
               <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Nullstill kampklokken?</AlertDialogTitle><AlertDialogDescription>Klokken settes tilbake til 00:00. Registrerte hendelser og bytter beholdes.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Avbryt</AlertDialogCancel><AlertDialogAction onClick={() => void onClock("reset", 0, 0)}>Nullstill</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
             </AlertDialog>}
-            {phase === "second_half" && <AlertDialog><AlertDialogTrigger asChild><Button className="border-white/30 text-white hover:bg-white/10 hover:text-white" variant="outline"><Flag /> Kamp ferdig</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Avslutt og lås kampen?</AlertDialogTitle><AlertDialogDescription>Kampklokken stoppes, og kampen tas med i statistikken. Administrator kan åpne den igjen senere.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Avbryt</AlertDialogCancel><AlertDialogAction onClick={() => void onComplete(clockSeconds, displayedPeriodSeconds)}>Kamp ferdig</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
+            {(phase === "second_half" || (singlePeriodMatch && (phase === "first_half" || phase === "halftime"))) && <AlertDialog><AlertDialogTrigger asChild><Button className="border-white/30 text-white hover:bg-white/10 hover:text-white" variant="outline"><Flag /> Kamp ferdig</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Avslutt og lås kampen?</AlertDialogTitle><AlertDialogDescription>Kampklokken stoppes, og kampen tas med i statistikken. Administrator kan åpne den igjen senere.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Avbryt</AlertDialogCancel><AlertDialogAction onClick={() => void onComplete(clockSeconds, displayedPeriodSeconds)}>Kamp ferdig</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
           </div>}
           {ourGoals.length > 0 && <div className="mt-4 border-t border-white/20 pt-3"><p className="text-center text-xs font-bold uppercase tracking-wider text-red-100">Siste mål</p><div className="mt-2 flex flex-wrap justify-center gap-1.5">{ourGoals.slice(0, 6).map((event) => { const player = players.find((item) => item.id === event.playerId); return <span key={event.id} className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-semibold">{player ? compactName(player.name, rosterPlayers) : "Spiller"} · {formatEventTime(event.period, event.periodSecond)}</span>; })}</div></div>}
         </section>
