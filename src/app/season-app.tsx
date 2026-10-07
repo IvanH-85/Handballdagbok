@@ -811,156 +811,9 @@ function StatsSection({ data }: { data: SeasonData }) {
   const SortHead = ({ value, label }: { value: SortKey; label: string }) => <TableHead className={value === "name" ? "" : "text-center"}><button type="button" onClick={() => chooseSort(value)} className={`inline-flex min-h-10 items-center gap-1 whitespace-nowrap font-bold ${sortKey === value ? "text-primary" : "text-slate-700"}`}>{label}{sortKey === value && (descending ? <ArrowDown className="size-3.5" /> : <ArrowUp className="size-3.5" />)}</button></TableHead>;
   return <div className="space-y-5">
     <SectionCard eyebrow="Automatisk oversikt" title="Sesongstatistikk" count={`${completedTrainings.length} gjennomførte treninger · ${completedMatches.length} valgte kamper`}><TrainingFocusSummary trainings={completedTrainings} /><div className="mt-5 grid gap-3 rounded-2xl border bg-white p-3 sm:grid-cols-2"><Field label="Vis statistikk for" htmlFor="stats-scope" className="!mt-0"><Select value={scope} onValueChange={setScope}><SelectTrigger id="stats-scope"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle kamper</SelectItem><SelectItem value="league">Serie</SelectItem><SelectItem value="cup">Alle cuper</SelectItem>{cupNames.map((cup) => <SelectItem key={cup} value={`cup:${cup}`}>{cup}</SelectItem>)}<SelectItem value="friendly">Vennskapskamper</SelectItem></SelectContent></Select></Field><div className="sm:hidden"><Field label="Sorter etter" htmlFor="stats-sort" className="!mt-0"><div className="flex gap-2"><Select value={sortKey} onValueChange={(value) => chooseSort(value as SortKey)}><SelectTrigger id="stats-sort"><SelectValue /></SelectTrigger><SelectContent>{sortOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select><Button aria-label={descending ? "Sorter stigende" : "Sorter synkende"} variant="outline" size="icon" onClick={() => setDescending((value) => !value)}>{descending ? <ArrowDown /> : <ArrowUp />}</Button></div></Field></div></div>{rows.length === 0 ? <EmptyState icon={BarChart3} title="Ingen statistikk ennå" text="Statistikken fylles når treninger og kamper markeres som gjennomført." /> : <div className="mt-3 overflow-x-auto rounded-2xl border bg-white"><Table><TableHeader><TableRow>{sortOptions.map((option) => <SortHead key={option.value} value={option.value} label={option.label} />)}</TableRow></TableHeader><TableBody>{rows.map((row) => <TableRow key={row.player.id}><TableCell className="whitespace-nowrap font-semibold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</TableCell><TableCell className="text-center">{row.trainings}</TableCell><TableCell className="text-center">{row.matches}</TableCell><TableCell className="text-center">{row.starts}</TableCell><TableCell className="whitespace-nowrap text-center">{formatSeasonPlayingTime(row.playingSeconds)}</TableCell><TableCell className="text-center">{row.goals}</TableCell><TableCell className="text-center">{row.saves}</TableCell><TableCell className="text-center">{row.twoMinutes}</TableCell><TableCell className="text-center">{row.captain}</TableCell></TableRow>)}</TableBody></Table></div>}<p className="mt-4 text-xs leading-5 text-muted-foreground">Bare aktiviteter som er markert som gjennomført inngår i statistikken. Trening viser hele sesongen.</p></SectionCard>
-    <CrossMatchReport data={data} matches={completedMatches} />
     <PlayerUsageOverview data={data} matches={completedMatches} />
-    <PositionUsageSummary data={data} matches={completedMatches} />
     <SeriesStandings table={data.seriesTable} />
   </div>;
-}
-
-function CrossMatchReport({ data, matches }: { data: SeasonData; matches: Match[] }) {
-  type CourtPosition = Exclude<Position, "bench">;
-  type Candidate = { playerId: number; position: CourtPosition; seconds: number; stints: number; goalsFor: number; goalsAgainst: number; personalGoals: number; saves: number; shotsOnTarget: number; matchIds: Set<number> };
-  type ScoredCandidate = Candidate & { score: number; confidence: "Godt" | "Middels" | "Lite" };
-  const courtPositions: CourtPosition[] = ["left_wing", "left_back", "center", "right_back", "right_wing", "goalkeeper"];
-  const phaseLabels = ["Start 1. omgang", "Midt i 1. omgang", "Slutt 1. omgang", "Start 2. omgang", "Midt i 2. omgang", "Slutt 2. omgang"];
-  const phases = phaseLabels.map((label) => ({ label, goalsFor: 0, goalsAgainst: 0, matches: new Set<number>() }));
-  const candidates = new Map<string, Candidate>();
-  const goalTypes = new Set<EventType>(["goal_open", "goal_penalty"]);
-
-  for (const match of matches) {
-    const allMatchEvents = data.matchEvents.filter((event) => event.matchId === match.id && !event.annulled);
-    const matchEvents = allMatchEvents.filter((event) => goalTypes.has(event.type));
-    const periodLength = Math.max(60, match.periodMinutes * 60);
-    for (const event of matchEvents) {
-      const periodIndex = Math.min(1, Math.max(0, event.period - 1));
-      const third = Math.min(2, Math.floor(Math.max(0, event.periodSecond) / Math.max(1, periodLength / 3)));
-      const phase = phases[periodIndex * 3 + third];
-      if (event.side === "ours") phase.goalsFor += 1;
-      else phase.goalsAgainst += 1;
-      phase.matches.add(match.id);
-    }
-
-    const roster = data.matchPlayers.filter((entry) => entry.matchId === match.id);
-    const substitutions = data.matchSubstitutions.filter((entry) => entry.matchId === match.id).sort((a, b) => a.matchSecond - b.matchSecond || a.id - b.id);
-    const positions = normalizeMatchPositions(roster);
-    const matchEnd = currentMatchSeconds(match);
-    let intervalStart = 0;
-    const recordInterval = (intervalEnd: number, includeEnd: boolean) => {
-      const safeEnd = Math.min(matchEnd, Math.max(intervalStart, intervalEnd));
-      const seconds = safeEnd - intervalStart;
-      if (seconds <= 0) return;
-      const inInterval = (event: MatchEvent) => event.matchSecond >= intervalStart && (includeEnd ? event.matchSecond <= safeEnd : event.matchSecond < safeEnd);
-      const intervalGoals = matchEvents.filter(inInterval);
-      const intervalSaves = allMatchEvents.filter((event) => (event.type === "save_open" || event.type === "save_penalty") && inInterval(event));
-      const goalsFor = intervalGoals.filter((event) => event.side === "ours").length;
-      const goalsAgainst = intervalGoals.filter((event) => event.side === "opponent").length;
-      for (const [playerId, position] of positions) {
-        if (position === "bench") continue;
-        const key = `${playerId}:${position}`;
-        const current = candidates.get(key) ?? { playerId, position, seconds: 0, stints: 0, goalsFor: 0, goalsAgainst: 0, personalGoals: 0, saves: 0, shotsOnTarget: 0, matchIds: new Set<number>() };
-        const playerSaves = intervalSaves.filter((event) => event.playerId === playerId).length;
-        current.seconds += seconds;
-        current.goalsFor += goalsFor;
-        current.goalsAgainst += goalsAgainst;
-        current.personalGoals += intervalGoals.filter((event) => event.side === "ours" && event.playerId === playerId).length;
-        current.saves += playerSaves;
-        if (position === "goalkeeper") current.shotsOnTarget += goalsAgainst + playerSaves;
-        current.matchIds.add(match.id);
-        candidates.set(key, current);
-      }
-      intervalStart = safeEnd;
-    };
-    for (const substitution of substitutions) {
-      recordInterval(substitution.matchSecond, false);
-      positions.set(substitution.playerOutId, substitution.swap ? substitution.playerInPreviousPosition ?? "bench" : "bench");
-      positions.set(substitution.playerInId, substitution.position);
-    }
-    recordInterval(matchEnd, true);
-    const positionStats = calculatePositionStatistics(roster, substitutions, matchEnd);
-    for (const [playerId, playerStats] of positionStats) for (const positionStat of playerStats.positions) {
-      const key = `${playerId}:${positionStat.position}`;
-      const candidate = candidates.get(key);
-      if (candidate) candidate.stints += positionStat.stints;
-    }
-  }
-
-  const phaseRows = phases.filter((phase, index) => index < 3 || matches.some((match) => match.periodCount > 1)).map((phase) => ({ ...phase, difference: phase.goalsFor - phase.goalsAgainst }));
-  const comparablePhases = phaseRows.filter((phase) => phase.goalsFor + phase.goalsAgainst > 0);
-  const strongestPhase = [...comparablePhases].sort((a, b) => b.difference - a.difference)[0];
-  const hardestPhase = [...comparablePhases].sort((a, b) => a.difference - b.difference)[0];
-  const perTen = (value: number, seconds: number) => seconds ? (value / seconds) * 600 : 0;
-  const normalize = (values: number[], value: number, inverse = false) => {
-    const minimum = Math.min(...values);
-    const maximum = Math.max(...values);
-    const normalized = maximum === minimum ? .5 : (value - minimum) / (maximum - minimum);
-    return inverse ? 1 - normalized : normalized;
-  };
-  const scoredByPosition = new Map<CourtPosition, ScoredCandidate[]>();
-  for (const position of courtPositions) {
-    const positionCandidates = [...candidates.values()].filter((candidate) => candidate.position === position && candidate.seconds >= 120);
-    const differences = positionCandidates.map((candidate) => perTen(candidate.goalsFor - candidate.goalsAgainst, candidate.seconds));
-    const attacks = positionCandidates.map((candidate) => perTen(candidate.goalsFor, candidate.seconds));
-    const defenses = positionCandidates.map((candidate) => perTen(candidate.goalsAgainst, candidate.seconds));
-    const personal = positionCandidates.map((candidate) => perTen(candidate.personalGoals, candidate.seconds));
-    const savePercentages = positionCandidates.map((candidate) => candidate.shotsOnTarget ? candidate.saves / candidate.shotsOnTarget : 0);
-    const scored = positionCandidates.map((candidate) => {
-      const difference = perTen(candidate.goalsFor - candidate.goalsAgainst, candidate.seconds);
-      const attack = perTen(candidate.goalsFor, candidate.seconds);
-      const defense = perTen(candidate.goalsAgainst, candidate.seconds);
-      const raw = position === "goalkeeper"
-        ? (normalize(savePercentages, candidate.shotsOnTarget ? candidate.saves / candidate.shotsOnTarget : 0) * .45 + normalize(defenses, defense, true) * .35 + normalize(differences, difference) * .2) * 100
-        : (normalize(differences, difference) * .5 + normalize(attacks, attack) * .25 + normalize(defenses, defense, true) * .15 + normalize(personal, perTen(candidate.personalGoals, candidate.seconds)) * .1) * 100;
-      const reliability = Math.min(1, candidate.seconds / 2400) * Math.min(1, candidate.matchIds.size / 2);
-      const score = Math.round(50 + (raw - 50) * (.35 + reliability * .65));
-      const confidence = candidate.seconds >= 3600 && candidate.matchIds.size >= 3 ? "Godt" : candidate.seconds >= 1200 && candidate.matchIds.size >= 2 ? "Middels" : "Lite";
-      return { ...candidate, score, confidence } as ScoredCandidate;
-    }).sort((a, b) => b.score - a.score || b.seconds - a.seconds);
-    scoredByPosition.set(position, scored);
-  }
-  let bestSelection: ScoredCandidate[] = [];
-  let bestTotal = -Infinity;
-  const findSelection = (index: number, selected: ScoredCandidate[], usedPlayers: Set<number>, total: number) => {
-    if (index === courtPositions.length) { if (total > bestTotal) { bestTotal = total; bestSelection = [...selected]; } return; }
-    const options = (scoredByPosition.get(courtPositions[index]) ?? []).slice(0, 6);
-    for (const option of options) {
-      if (usedPlayers.has(option.playerId)) continue;
-      usedPlayers.add(option.playerId);
-      selected.push(option);
-      findSelection(index + 1, selected, usedPlayers, total + option.score);
-      selected.pop();
-      usedPlayers.delete(option.playerId);
-    }
-  };
-  findSelection(0, [], new Set<number>(), 0);
-  const recommended = new Map(bestSelection.map((candidate) => [candidate.position, candidate]));
-  const playerFor = (candidate: ScoredCandidate | undefined) => data.players.find((player) => player.id === candidate?.playerId);
-  const alternatives = new Map(courtPositions.map((position) => [position, (scoredByPosition.get(position) ?? []).find((candidate) => !bestSelection.some((selected) => selected.playerId === candidate.playerId))]));
-  const totalRegisteredShots = bestSelection.filter((candidate) => candidate.position === "goalkeeper").reduce((sum, candidate) => sum + candidate.shotsOnTarget, 0);
-  const matchTrend = [...matches].sort((a, b) => `${a.date}T${a.startTime || "00:00"}`.localeCompare(`${b.date}T${b.startTime || "00:00"}`)).map((match) => {
-    const events = data.matchEvents.filter((event) => event.matchId === match.id && !event.annulled && goalTypes.has(event.type));
-    const goalsFor = match.ourScore ?? events.filter((event) => event.side === "ours").length;
-    const goalsAgainst = match.opponentScore ?? events.filter((event) => event.side === "opponent").length;
-    return { match, goalsFor, goalsAgainst, difference: goalsFor - goalsAgainst };
-  });
-  const largestMatchScore = Math.max(1, ...matchTrend.flatMap((row) => [row.goalsFor, row.goalsAgainst]));
-
-  return <SectionCard eyebrow="Kun for administratorer" title="Kamprapport på tvers av kamper" count={`${matches.length} gjennomførte kamper i valgt filter`}>
-    {matches.length === 0 ? <EmptyState icon={BarChart3} title="Ingen kamper å sammenligne" text="Rapporten fylles når kamper er gjennomført med registrerte mål og bytter." /> : <div className="space-y-7">
-      <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4"><h3 className="font-black text-sky-950">Det rapporten finner nå</h3><div className="mt-3 grid gap-2 text-sm text-sky-950 sm:grid-cols-2"><p className="rounded-xl bg-white/70 p-3"><span className="block text-xs font-bold uppercase tracking-wider text-sky-700">Sterkeste periode</span><span className="mt-1 block font-bold">{strongestPhase ? `${strongestPhase.label} · ${strongestPhase.difference > 0 ? "+" : ""}${strongestPhase.difference} mål` : "For lite måldata"}</span></p><p className="rounded-xl bg-white/70 p-3"><span className="block text-xs font-bold uppercase tracking-wider text-sky-700">Mest krevende periode</span><span className="mt-1 block font-bold">{hardestPhase ? `${hardestPhase.label} · ${hardestPhase.difference > 0 ? "+" : ""}${hardestPhase.difference} mål` : "For lite måldata"}</span></p></div></section>
-
-      <section><div className="mb-3"><h3 className="font-black">Databasert forslag til startsekser</h3><p className="mt-1 text-sm text-muted-foreground">Én spiller per posisjon. Forslaget kombinerer mål for og mot mens spilleren står i posisjonen, egne mål, keeperredninger og størrelsen på datagrunnlaget.</p></div>{bestSelection.length !== courtPositions.length ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Det er foreløpig for lite registrert posisjonsdata til å sette opp seks unike spillere.</p> : <><div className="rounded-[2rem] border-4 border-orange-200 bg-orange-300 p-3 shadow-inner sm:p-6"><div className="grid grid-cols-5 gap-1.5 sm:gap-3">{courtPositions.slice(0, 5).map((position) => { const candidate = recommended.get(position); const player = playerFor(candidate); return <RecommendedPlayerCard key={position} position={position} player={player} candidate={candidate} />; })}</div><div className="mx-auto mt-5 w-1/3 min-w-24"><RecommendedPlayerCard position="goalkeeper" player={playerFor(recommended.get("goalkeeper"))} candidate={recommended.get("goalkeeper")} /></div></div><div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{courtPositions.map((position) => { const candidate = recommended.get(position); const player = playerFor(candidate); const alternative = alternatives.get(position); const alternativePlayer = playerFor(alternative); const difference = candidate ? perTen(candidate.goalsFor - candidate.goalsAgainst, candidate.seconds) : 0; const savePercentage = candidate?.shotsOnTarget ? Math.round((candidate.saves / candidate.shotsOnTarget) * 100) : null; return <article key={position} className="rounded-2xl border bg-white p-4"><div className="flex items-start justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-wider text-primary">{positionLabels[position]}</p><p className="mt-1 font-black">{player ? shortPlayerName(player.name) : "Mangler data"}</p></div>{candidate && <Badge className={candidate.confidence === "Godt" ? "bg-emerald-100 text-emerald-900" : candidate.confidence === "Middels" ? "bg-amber-100 text-amber-950" : "bg-slate-100 text-slate-700"}>{candidate.confidence} grunnlag</Badge>}</div>{candidate && <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-slate-50 p-2"><span className="block font-black">{formatDetailedPlayingTime(candidate.seconds)}</span>Tid</div><div className="rounded-xl bg-slate-50 p-2"><span className={`block font-black ${difference > 0 ? "text-emerald-700" : difference < 0 ? "text-red-700" : ""}`}>{difference > 0 ? "+" : ""}{difference.toFixed(1)}</span>+/− per 10</div><div className="rounded-xl bg-slate-50 p-2"><span className="block font-black">{position === "goalkeeper" && savePercentage !== null ? `${savePercentage} %` : candidate.personalGoals}</span>{position === "goalkeeper" ? "Redninger" : "Egne mål"}</div></div>}<p className="mt-3 text-xs text-muted-foreground">Alternativ: <span className="font-semibold text-slate-800">{alternativePlayer ? shortPlayerName(alternativePlayer.name) : "Ikke nok data"}</span></p></article>; })}</div><p className="mt-3 text-xs text-muted-foreground">Keeperberegningen bruker {totalRegisteredShots} registrerte skudd på mål i utvalget. Manglende redningsregistrering gir svakere datagrunnlag.</p></>}</section>
-
-      <section><div className="mb-3"><h3 className="font-black">Resultatutvikling gjennom sesongen</h3><p className="mt-1 text-sm text-muted-foreground">Viser hvordan mål for og mot utvikler seg kamp for kamp i valgt filter.</p></div><div className="space-y-3 rounded-2xl border bg-white p-4">{matchTrend.map((row) => <div key={row.match.id} className="grid grid-cols-[96px_1fr_44px] items-center gap-3 sm:grid-cols-[180px_1fr_56px]"><div className="min-w-0"><p className="truncate text-sm font-bold">{row.match.opponent}</p><p className="text-[11px] text-muted-foreground">{formatDate(row.match.date)}</p></div><div className="space-y-1"><div className="h-2 overflow-hidden rounded-full bg-emerald-100"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${(row.goalsFor / largestMatchScore) * 100}%` }} /></div><div className="h-2 overflow-hidden rounded-full bg-red-100"><div className="h-full rounded-full bg-red-500" style={{ width: `${(row.goalsAgainst / largestMatchScore) * 100}%` }} /></div></div><div className="text-right"><p className="font-black">{row.goalsFor}–{row.goalsAgainst}</p><p className={`text-[11px] font-bold ${row.difference > 0 ? "text-emerald-700" : row.difference < 0 ? "text-red-700" : "text-slate-600"}`}>{row.difference > 0 ? "+" : ""}{row.difference}</p></div></div>)}</div><div className="mt-2 flex gap-4 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-emerald-600" />Mål for</span><span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-red-500" />Mål mot</span></div></section>
-
-      <section><div className="mb-3"><h3 className="font-black">Gjentakelser i kampforløpet</h3><p className="mt-1 text-sm text-muted-foreground">Hver omgang deles i tre like deler, slik at serie- og cupkamper med ulik spilletid kan sammenlignes.</p></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{phaseRows.map((phase) => <article key={phase.label} className={`rounded-2xl border p-4 ${phase.difference > 0 ? "border-emerald-200 bg-emerald-50" : phase.difference < 0 ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}><p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{phase.label}</p><div className="mt-2 flex items-end justify-between gap-3"><p className="text-3xl font-black">{phase.goalsFor}–{phase.goalsAgainst}</p><Badge className={phase.difference > 0 ? "bg-emerald-100 text-emerald-900" : phase.difference < 0 ? "bg-red-100 text-red-900" : "bg-amber-100 text-amber-950"}>{phase.difference > 0 ? `+${phase.difference}` : phase.difference}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Registrerte mål fra {phase.matches.size} {phase.matches.size === 1 ? "kamp" : "kamper"}</p></article>)}</div></section>
-    </div>}
-    <p className="mt-5 text-xs leading-5 text-muted-foreground">Forslaget er et trenerverktøy, ikke en fasit eller rangering av spillerne. Motstander, kampbilde og registreringskvalitet påvirker tallene. Bruk det sammen med egne observasjoner, belastning og behovet for rettferdig utvikling.</p>
-  </SectionCard>;
-}
-
-function RecommendedPlayerCard({ position, player, candidate }: { position: Exclude<Position, "bench">; player: Player | undefined; candidate: { score: number; confidence: "Godt" | "Middels" | "Lite" } | undefined }) {
-  return <div className="min-w-0 rounded-xl border-2 border-white bg-white/95 px-1.5 py-2 text-center shadow-md sm:px-3"><p className="truncate text-[9px] font-bold uppercase tracking-wide text-primary sm:text-xs">{positionLabels[position]}</p><p className="mt-1 truncate text-[10px] font-black sm:text-sm">{player ? shortPlayerName(player.name) : "–"}</p><p className="mt-1 text-[9px] text-muted-foreground sm:text-xs">{player?.jerseyNumber ? `#${player.jerseyNumber} · ` : ""}{candidate ? `${candidate.score}/100` : ""}</p></div>;
 }
 
 function RecentPlayingTimeSummary({ data, matches }: { data: SeasonData; matches: Match[] }) {
@@ -991,11 +844,9 @@ function RecentPlayingTimeSummary({ data, matches }: { data: SeasonData; matches
 }
 
 function PlayerUsageOverview({ data, matches }: { data: SeasonData; matches: Match[] }) {
-  type UsageSortKey = "name" | "primary" | "secondary" | "total";
+  type OverviewSortKey = "name" | "attendance" | "playingShare" | "playingTime";
   const positionColors: Record<PositionStat["position"], string> = { goalkeeper: "#7c3aed", left_wing: "#0284c7", left_back: "#0891b2", center: "#059669", right_back: "#d97706", right_wing: "#dc2626" };
-  const [sortKey, setSortKey] = useState<UsageSortKey>("name");
-  const [descending, setDescending] = useState(false);
-  const [selectedChartPlayerId, setSelectedChartPlayerId] = useState<number | null>(null);
+  const [sortKey, setSortKey] = useState<OverviewSortKey>("name");
   const completedTrainings = data.trainings.filter((training) => training.status === "completed");
   const completedTrainingIds = new Set(completedTrainings.map((training) => training.id));
   const rows = data.players.filter((player) => Boolean(player.active)).map((player) => {
@@ -1016,68 +867,38 @@ function PlayerUsageOverview({ data, matches }: { data: SeasonData; matches: Mat
     const positions = [...totals.entries()].map(([position, value]) => ({ position, ...value })).sort((a, b) => b.seconds - a.seconds || positionLabels[a.position].localeCompare(positionLabels[b.position], "nb-NO"));
     const totalSeconds = positions.reduce((sum, position) => sum + position.seconds, 0);
     const attendedTrainings = data.attendance.filter((entry) => entry.playerId === player.id && completedTrainingIds.has(entry.trainingId)).length;
-    return { player, positions, primary: positions[0] ?? null, secondary: positions[1] ?? null, totalSeconds, selectedMatches, attendanceRate: completedTrainings.length ? attendedTrainings / completedTrainings.length : 0, playingShare: availableSeconds ? totalSeconds / availableSeconds : 0, attendedTrainings };
-  }).filter((row) => row.positions.length > 0);
-  const sortedRows = [...rows].sort((a, b) => {
-    const value = (row: typeof a) => sortKey === "name" ? row.player.name : sortKey === "total" ? row.totalSeconds : sortKey === "primary" ? positionLabels[row.primary?.position ?? "goalkeeper"] : positionLabels[row.secondary?.position ?? "goalkeeper"];
-    const aValue = value(a);
-    const bValue = value(b);
-    const result = typeof aValue === "string" ? aValue.localeCompare(String(bValue), "nb-NO") : aValue - Number(bValue);
-    return (descending ? -result : result) || a.player.name.localeCompare(b.player.name, "nb-NO");
+    const attendanceRate = completedTrainings.length ? attendedTrainings / completedTrainings.length : 0;
+    const playingShare = availableSeconds ? totalSeconds / availableSeconds : 0;
+    return { player, positions, totalSeconds, selectedMatches, attendedTrainings, attendanceRate, playingShare, averageSeconds: selectedMatches ? totalSeconds / selectedMatches : 0 };
   });
-  function chooseSort(next: UsageSortKey) { if (next === sortKey) setDescending((value) => !value); else { setSortKey(next); setDescending(next === "total"); } }
-  const SortButton = ({ value, label }: { value: UsageSortKey; label: string }) => <button type="button" onClick={() => chooseSort(value)} className={`inline-flex min-h-10 items-center gap-1 whitespace-nowrap font-bold ${sortKey === value ? "text-primary" : "text-slate-700"}`}>{label}{sortKey === value && (descending ? <ArrowDown className="size-3.5" /> : <ArrowUp className="size-3.5" />)}</button>;
+  const sortedRows = [...rows].sort((a, b) => {
+    if (sortKey === "name") return a.player.name.localeCompare(b.player.name, "nb-NO");
+    const aValue = sortKey === "attendance" ? a.attendanceRate : sortKey === "playingShare" ? a.playingShare : a.totalSeconds;
+    const bValue = sortKey === "attendance" ? b.attendanceRate : sortKey === "playingShare" ? b.playingShare : b.totalSeconds;
+    return bValue - aValue || a.player.name.localeCompare(b.player.name, "nb-NO");
+  });
+  const positionRows = rows.filter((row) => row.positions.length > 0).sort((a, b) => a.player.name.localeCompare(b.player.name, "nb-NO"));
   const percentage = (seconds: number, total: number) => total ? Math.round((seconds / total) * 100) : 0;
-  const chartRows = rows.filter((row) => row.selectedMatches > 0);
-  const selectedChartRow = chartRows.find((row) => row.player.id === selectedChartPlayerId) ?? null;
-  const chartX = (value: number) => 78 + Math.min(1, Math.max(0, value)) * 850;
-  const chartY = (value: number) => 455 - Math.min(1, Math.max(0, value)) * 390;
+  const averageAttendance = rows.length ? Math.round((rows.reduce((sum, row) => sum + row.attendanceRate, 0) / rows.length) * 100) : 0;
+  const playersWithMatches = rows.filter((row) => row.selectedMatches > 0);
+  const averagePlayingShare = playersWithMatches.length ? Math.round((playersWithMatches.reduce((sum, row) => sum + row.playingShare, 0) / playersWithMatches.length) * 100) : 0;
 
   return <SectionCard eyebrow="Kun for administratorer" title="Spillerbruk og helhetsbilde" count={`${matches.length} kamper · ${completedTrainings.length} treninger`}>
-    {rows.length === 0 ? <EmptyState icon={BarChart3} title="Ingen spillerbruk registrert" text="Oversikten fylles når startposisjoner og bytter er registrert i gjennomførte kamper." /> : <div className="space-y-7">
-      <section><div className="mb-3"><h3 className="font-black">Mest og nest mest brukt</h3><p className="mt-1 text-sm text-muted-foreground">Viser hvor trenerne har brukt spilleren mest. Andelen regnes av spillerens registrerte spilletid.</p></div><div className="overflow-x-auto rounded-2xl border bg-white"><Table className="min-w-[850px]"><TableHeader><TableRow><TableHead><SortButton value="name" label="Spiller" /></TableHead><TableHead><SortButton value="primary" label="Mest brukt" /></TableHead><TableHead className="text-center">Andel</TableHead><TableHead><SortButton value="secondary" label="Nest mest brukt" /></TableHead><TableHead className="text-center">Andel</TableHead><TableHead className="text-center"><SortButton value="total" label="Total tid" /></TableHead></TableRow></TableHeader><TableBody>{sortedRows.map((row) => <TableRow key={row.player.id}><TableCell className="whitespace-nowrap font-semibold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</TableCell><TableCell className="whitespace-nowrap font-bold" style={{ color: row.primary ? positionColors[row.primary.position] : undefined }}>{row.primary ? `${positionLabels[row.primary.position]} · ${formatDetailedPlayingTime(row.primary.seconds)}` : "–"}</TableCell><TableCell className="text-center font-bold">{row.primary ? `${percentage(row.primary.seconds, row.totalSeconds)} %` : "–"}</TableCell><TableCell className="whitespace-nowrap" style={{ color: row.secondary ? positionColors[row.secondary.position] : undefined }}>{row.secondary ? `${positionLabels[row.secondary.position]} · ${formatDetailedPlayingTime(row.secondary.seconds)}` : "–"}</TableCell><TableCell className="text-center">{row.secondary ? `${percentage(row.secondary.seconds, row.totalSeconds)} %` : "–"}</TableCell><TableCell className="text-center font-bold">{formatDetailedPlayingTime(row.totalSeconds)}</TableCell></TableRow>)}</TableBody></Table></div></section>
+    <div className="space-y-7">
+      <section>
+        <div className="mb-3"><h3 className="font-black">Posisjonsfordeling</h3><p className="mt-1 text-sm text-muted-foreground">Viser hvordan hver spillers registrerte spilletid er fordelt mellom posisjonene.</p></div>
+        {positionRows.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen registrerte posisjoner i de valgte kampene.</p> : <div className="grid gap-3 lg:grid-cols-2">{positionRows.map((row) => <article key={row.player.id} className="rounded-2xl border bg-white p-4"><div className="flex items-center justify-between gap-3"><p className="truncate font-bold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</p><span className="shrink-0 text-sm font-semibold">{formatDetailedPlayingTime(row.totalSeconds)}</span></div><div className="mt-3 flex h-4 overflow-hidden rounded-full bg-slate-100">{row.positions.map((position) => <span key={position.position} title={`${positionLabels[position.position]}: ${formatDetailedPlayingTime(position.seconds)} (${percentage(position.seconds, row.totalSeconds)} %)`} style={{ width: `${(position.seconds / row.totalSeconds) * 100}%`, backgroundColor: positionColors[position.position] }} />)}</div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">{row.positions.map((position) => <span key={position.position} className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ backgroundColor: positionColors[position.position] }} /><span>{positionLabels[position.position]} {percentage(position.seconds, row.totalSeconds)} %</span></span>)}</div></article>)}</div>}
+      </section>
 
-      <section><div className="mb-3"><h3 className="font-black">Posisjonsfordeling</h3><p className="mt-1 text-sm text-muted-foreground">Fargelinjen viser hvordan spilletiden til hver spiller er fordelt mellom posisjonene.</p></div><div className="grid gap-3 lg:grid-cols-2">{sortedRows.map((row) => <article key={row.player.id} className="rounded-2xl border bg-white p-4"><div className="flex items-center justify-between gap-3"><p className="truncate font-bold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</p><span className="shrink-0 text-sm font-semibold">{formatDetailedPlayingTime(row.totalSeconds)}</span></div><div className="mt-3 flex h-4 overflow-hidden rounded-full bg-slate-100">{row.positions.map((position) => <span key={position.position} title={`${positionLabels[position.position]}: ${formatDetailedPlayingTime(position.seconds)} (${percentage(position.seconds, row.totalSeconds)} %)`} style={{ width: `${(position.seconds / row.totalSeconds) * 100}%`, backgroundColor: positionColors[position.position] }} />)}</div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">{row.positions.map((position) => <span key={position.position} className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ backgroundColor: positionColors[position.position] }} /><span>{positionLabels[position.position]} {percentage(position.seconds, row.totalSeconds)} %</span></span>)}</div></article>)}</div></section>
-
-      <section><div className="mb-3"><h3 className="font-black">Treningsdeltakelse og spilletid</h3><p className="mt-1 text-sm text-muted-foreground">Vannrett viser treningsdeltakelse. Loddrett viser hvor stor del av kampene spilleren har vært på banen når hun har vært tatt ut. Trykk på en sirkel for navn og detaljer.</p></div>{completedTrainings.length === 0 || chartRows.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Det trengs både gjennomførte treninger og kamper før helhetsbildet kan vises.</p> : <><div className="overflow-x-auto rounded-2xl border bg-white p-2"><svg role="img" aria-label="Diagram over treningsdeltakelse og spilletid" className="min-w-[760px]" viewBox="0 0 1000 520"><rect x="78" y="65" width="850" height="390" rx="16" fill="#f8fafc" />{[0, .25, .5, .75, 1].map((tick) => <g key={tick}><line x1="78" x2="928" y1={chartY(tick)} y2={chartY(tick)} stroke="#cbd5e1" strokeDasharray="4 5" /><line x1={chartX(tick)} x2={chartX(tick)} y1="65" y2="455" stroke="#cbd5e1" strokeDasharray="4 5" /><text x="62" y={chartY(tick) + 5} textAnchor="end" fontSize="13" fill="#64748b">{Math.round(tick * 100)} %</text><text x={chartX(tick)} y="478" textAnchor="middle" fontSize="13" fill="#64748b">{Math.round(tick * 100)} %</text></g>)}<text x="503" y="507" textAnchor="middle" fontSize="15" fontWeight="700" fill="#334155">Treningsdeltakelse</text><text x="20" y="260" textAnchor="middle" fontSize="15" fontWeight="700" fill="#334155" transform="rotate(-90 20 260)">Spilletidsandel</text>{chartRows.map((row) => { const x = chartX(row.attendanceRate); const y = chartY(row.playingShare); const color = row.primary ? positionColors[row.primary.position] : "#64748b"; const radius = Math.min(16, 8 + row.selectedMatches); const selected = row.player.id === selectedChartPlayerId; return <g key={row.player.id} role="button" tabIndex={0} className="cursor-pointer" onClick={() => setSelectedChartPlayerId(row.player.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setSelectedChartPlayerId(row.player.id); }}><title>{`${row.player.name}: ${Math.round(row.attendanceRate * 100)} % trening, ${Math.round(row.playingShare * 100)} % spilletid, ${row.selectedMatches} kamper`}</title><circle cx={x} cy={y} r={radius} fill={color} fillOpacity="0.9" stroke={selected ? "#111827" : "white"} strokeWidth={selected ? "5" : "3"} /><text x={x} y={y + 4} textAnchor="middle" fontSize="10" fontWeight="900" fill="white">{row.player.jerseyNumber ?? "•"}</text>{selected && <text x={x} y={y - radius - 8} textAnchor="middle" fontSize="13" fontWeight="800" fill="#1e293b">{shortPlayerName(row.player.name)}</text>}</g>; })}</svg></div>{selectedChartRow && <div className="mt-3 grid gap-2 rounded-2xl border bg-slate-50 p-4 sm:grid-cols-4"><div className="sm:col-span-1"><p className="text-xs font-bold uppercase tracking-wider text-primary">Valgt spiller</p><p className="mt-1 font-black">{selectedChartRow.player.name}</p></div><p className="rounded-xl bg-white p-3 text-sm"><span className="block text-xs text-muted-foreground">Treninger</span><span className="font-black">{selectedChartRow.attendedTrainings}/{completedTrainings.length} · {Math.round(selectedChartRow.attendanceRate * 100)} %</span></p><p className="rounded-xl bg-white p-3 text-sm"><span className="block text-xs text-muted-foreground">Spilletidsandel</span><span className="font-black">{Math.round(selectedChartRow.playingShare * 100)} %</span></p><p className="rounded-xl bg-white p-3 text-sm"><span className="block text-xs text-muted-foreground">Mest brukt</span><span className="font-black">{selectedChartRow.primary ? positionLabels[selectedChartRow.primary.position] : "–"}</span></p></div>}<div className="mt-3 flex flex-wrap gap-3 text-xs">{Object.entries(positionColors).map(([position, color]) => <span key={position} className="inline-flex items-center gap-1.5"><span className="size-3 rounded-full" style={{ backgroundColor: color }} />{positionLabels[position as PositionStat["position"]]}</span>)}</div></>}</section>
-    </div>}
+      <section>
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h3 className="font-black">Treningsdeltakelse og spilletid</h3><p className="mt-1 text-sm text-muted-foreground">En direkte sammenligning per spiller. Spilletidsandelen gjelder bare kampene spilleren var tatt ut til.</p></div><div className="w-full sm:w-56"><Select value={sortKey} onValueChange={(value) => setSortKey(value as OverviewSortKey)}><SelectTrigger aria-label="Sorter oversikten"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">Sorter på navn</SelectItem><SelectItem value="attendance">Mest trening</SelectItem><SelectItem value="playingShare">Høyest spilleandel</SelectItem><SelectItem value="playingTime">Mest spilletid</SelectItem></SelectContent></Select></div></div>
+        {completedTrainings.length === 0 || matches.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Det trengs både gjennomførte treninger og kamper før helhetsbildet kan vises.</p> : <>
+          <div className="mb-3 grid grid-cols-2 gap-3"><div className="rounded-2xl border bg-red-50 p-4"><span className="block text-xs font-bold uppercase tracking-wider text-primary">Laget på trening</span><span className="mt-1 block text-2xl font-black">{averageAttendance} %</span><span className="text-xs text-muted-foreground">Gjennomsnittlig deltakelse</span></div><div className="rounded-2xl border bg-sky-50 p-4"><span className="block text-xs font-bold uppercase tracking-wider text-sky-800">Laget i kamp</span><span className="mt-1 block text-2xl font-black">{averagePlayingShare} %</span><span className="text-xs text-muted-foreground">Gjennomsnittlig spilleandel</span></div></div>
+          <div className="grid gap-3 lg:grid-cols-2">{sortedRows.map((row) => <article key={row.player.id} className="rounded-2xl border bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-black">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</p><p className="mt-1 text-xs text-muted-foreground">{row.attendedTrainings} av {completedTrainings.length} treninger · {row.selectedMatches} {row.selectedMatches === 1 ? "kamp" : "kamper"}</p></div><Badge variant="outline">{formatDetailedPlayingTime(row.totalSeconds)} totalt</Badge></div><div className="mt-4 space-y-4"><div><div className="mb-1.5 flex items-center justify-between text-sm"><span className="font-semibold">Treningsdeltakelse</span><span className="font-black">{Math.round(row.attendanceRate * 100)} %</span></div><div className="h-3 overflow-hidden rounded-full bg-red-100"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(row.attendanceRate * 100)}%` }} /></div></div><div><div className="mb-1.5 flex items-center justify-between text-sm"><span className="font-semibold">Spilletidsandel</span><span className="font-black">{row.selectedMatches ? `${Math.round(row.playingShare * 100)} %` : "Ikke tatt ut"}</span></div><div className="h-3 overflow-hidden rounded-full bg-sky-100"><div className="h-full rounded-full bg-sky-600" style={{ width: `${Math.round(row.playingShare * 100)}%` }} /></div></div></div><div className="mt-4 grid grid-cols-2 gap-2 text-sm"><p className="rounded-xl bg-slate-50 p-3"><span className="block text-xs text-muted-foreground">Gjennomsnitt per kamp</span><span className="font-black">{row.selectedMatches ? formatDetailedPlayingTime(row.averageSeconds) : "–"}</span></p><p className="rounded-xl bg-slate-50 p-3"><span className="block text-xs text-muted-foreground">Kamper i utvalget</span><span className="font-black">{row.selectedMatches} av {matches.length}</span></p></div></article>)}</div>
+        </>}
+      </section>
+    </div>
     <p className="mt-5 text-xs leading-5 text-muted-foreground">Dette er et trenerverktøy og ikke en rangering. Spilletidsandelen sammenligner bare kampene spilleren faktisk var tatt ut til. Datagrunnlaget avhenger av at startposisjoner, bytter og oppmøte er registrert.</p>
-  </SectionCard>;
-}
-
-function PositionUsageSummary({ data, matches }: { data: SeasonData; matches: Match[] }) {
-  type PositionMetric = "seconds" | "stints";
-  type PositionSortKey = "name" | "total" | `${PositionStat["position"]}:${PositionMetric}`;
-  const positionColumns: PositionStat["position"][] = ["goalkeeper", "left_wing", "left_back", "center", "right_back", "right_wing"];
-  const [sortKey, setSortKey] = useState<PositionSortKey>("total");
-  const [descending, setDescending] = useState(true);
-  const rows = data.players.filter((player) => Boolean(player.active)).map((player) => {
-    const totals = new Map<PositionStat["position"], { seconds: number; stints: number }>();
-    for (const match of matches) {
-      const roster = data.matchPlayers.filter((entry) => entry.matchId === match.id);
-      if (!roster.some((entry) => entry.playerId === player.id)) continue;
-      const statistics = calculatePositionStatistics(roster, data.matchSubstitutions.filter((entry) => entry.matchId === match.id), currentMatchSeconds(match)).get(player.id);
-      for (const position of statistics?.positions ?? []) {
-        const current = totals.get(position.position) ?? { seconds: 0, stints: 0 };
-        totals.set(position.position, { seconds: current.seconds + position.seconds, stints: current.stints + position.stints });
-      }
-    }
-    const positions = [...totals.entries()].map(([position, totalsForPosition]) => ({ position, ...totalsForPosition }));
-    return { player, positions, totals, totalSeconds: positions.reduce((sum, position) => sum + position.seconds, 0) };
-  }).filter((row) => row.positions.length > 0).sort((a, b) => {
-    const positionSort = sortKey.includes(":") ? sortKey.split(":") as [PositionStat["position"], PositionMetric] : null;
-    const aValue = sortKey === "name" ? a.player.name : sortKey === "total" ? a.totalSeconds : positionSort ? a.totals.get(positionSort[0])?.[positionSort[1]] ?? 0 : 0;
-    const bValue = sortKey === "name" ? b.player.name : sortKey === "total" ? b.totalSeconds : positionSort ? b.totals.get(positionSort[0])?.[positionSort[1]] ?? 0 : 0;
-    const result = typeof aValue === "string" ? aValue.localeCompare(String(bValue), "nb-NO") : aValue - Number(bValue);
-    return (descending ? -result : result) || a.player.name.localeCompare(b.player.name, "nb-NO");
-  });
-  function chooseSort(next: PositionSortKey) { if (next === sortKey) setDescending((value) => !value); else { setSortKey(next); setDescending(next !== "name"); } }
-  const SortButton = ({ value, label }: { value: PositionSortKey; label: string }) => <button type="button" onClick={() => chooseSort(value)} className={`inline-flex min-h-10 items-center gap-1 whitespace-nowrap font-bold ${sortKey === value ? "text-primary" : "text-slate-700"}`}>{label}{sortKey === value && (descending ? <ArrowDown className="size-3.5" /> : <ArrowUp className="size-3.5" />)}</button>;
-
-  return <SectionCard eyebrow="Spilletid og plassering" title="Posisjonsbruk" count={`${matches.length} gjennomførte kamper`}>
-    <p className="text-sm text-muted-foreground">Hver posisjon er delt i tid og antall ganger. Trykk på «Tid» eller «Ganger» under ønsket posisjon for å sortere.</p>
-    {rows.length === 0 ? <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen registrerte posisjoner i de valgte kampene.</p> : <div className="mt-4 overflow-x-auto rounded-2xl border bg-white"><Table className="min-w-[1500px]"><TableHeader><TableRow><TableHead rowSpan={2} className="sticky left-0 z-20 min-w-56 bg-slate-50 align-middle"><SortButton value="name" label="Spiller" /></TableHead><TableHead rowSpan={2} className="min-w-24 border-r text-center align-middle"><SortButton value="total" label="Totalt" /></TableHead>{positionColumns.map((position) => <TableHead key={position} colSpan={2} className="border-r text-center font-black text-slate-900">{positionLabels[position]}</TableHead>)}</TableRow><TableRow>{positionColumns.flatMap((position) => ([<TableHead key={`${position}-seconds`} className={`min-w-24 text-center ${sortKey === `${position}:seconds` ? "bg-red-50" : ""}`}><SortButton value={`${position}:seconds`} label="Tid" /></TableHead>, <TableHead key={`${position}-stints`} className={`min-w-24 border-r text-center ${sortKey === `${position}:stints` ? "bg-red-50" : ""}`}><SortButton value={`${position}:stints`} label="Ganger" /></TableHead>]))}</TableRow></TableHeader><TableBody>{rows.map((row) => <TableRow key={row.player.id}><TableCell className="sticky left-0 z-[1] whitespace-nowrap bg-white font-semibold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</TableCell><TableCell className="whitespace-nowrap border-r text-center font-bold">{formatDetailedPlayingTime(row.totalSeconds)}</TableCell>{positionColumns.flatMap((position) => { const value = row.totals.get(position); return [<TableCell key={`${position}-seconds`} className={`whitespace-nowrap text-center font-bold ${sortKey === `${position}:seconds` ? "bg-red-50/60" : ""}`}>{value ? formatDetailedPlayingTime(value.seconds) : <span className="text-muted-foreground">–</span>}</TableCell>, <TableCell key={`${position}-stints`} className={`border-r text-center ${sortKey === `${position}:stints` ? "bg-red-50/60 font-bold" : ""}`}>{value ? value.stints : <span className="text-muted-foreground">–</span>}</TableCell>]; })}</TableRow>)}</TableBody></Table></div>}
-    <p className="mt-4 text-xs leading-5 text-muted-foreground">Posisjoner kan bare beregnes fra startoppstilling og bytter som faktisk er registrert i kampen.</p>
   </SectionCard>;
 }
 
