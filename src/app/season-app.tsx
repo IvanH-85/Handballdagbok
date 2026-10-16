@@ -68,7 +68,7 @@ type AppRole = "admin" | "parent" | "match_registrar";
 type AppUser = { id: number; name: string; email: string | null; phone: string; role: AppRole; active: number | boolean; accountUserId: string | null; createdAt: string };
 type UserLoginStat = { userId: number; loginCount: number; lastLoginAt: string | null };
 type CurrentUser = { id: number; name: string; email: string | null; role: AppRole };
-type Training = { id: number; date: string; startTime: string; durationMinutes: number; title: string; theme: string; plan: string; notes: string; status: Exclude<ActivityStatus, "live">; completedAt: string | null; createdAt: string };
+type Training = { id: number; date: string; startTime: string; durationMinutes: number; title: string; theme: string; plan: string; notes: string; status: Exclude<ActivityStatus, "live">; completedAt: string | null; createdAt: string; attendanceRecorded: boolean };
 type Attendance = { trainingId: number; playerId: number };
 type Position = "goalkeeper" | "right_wing" | "right_back" | "center" | "left_back" | "left_wing" | "bench";
 type Match = { id: number; date: string; startTime: string; opponent: string; team: string; homeAway: "home" | "away"; internalMatch: boolean; competition: string; matchType: MatchType; cupName: string; venue: string; registrarName: string | null; ourScore: number | null; opponentScore: number | null; periodCount: number; periodMinutes: number; matchPhase: MatchPhase; currentPeriod: number; periodElapsedSeconds: number; clockStartedAt: string | null; elapsedSeconds: number; clockRunning: number | boolean; notes: string; status: ActivityStatus; completedAt: string | null; createdAt: string };
@@ -566,6 +566,7 @@ export function SeasonApp() {
           comments={data.matchComments.filter((entry) => entry.matchId === activeMatch.id)}
           canRecord={canRecordMatch(activeMatch.id) && activeMatch.status !== "completed" && activeMatch.status !== "cancelled"}
           showPositionStats={isAdmin}
+          showPlayingTime={isAdmin}
           onOpenChange={(open) => { if (!open) setActiveMatchId(null); }}
           onSave={(payload) => runAction({ action: "saveMatchNotes", matchId: activeMatch.id, notes: payload.notes }, "Kampnotatet er oppdatert.")}
           onClock={(clockMode, elapsedSeconds, periodElapsedSeconds, clockStartedAt) => runAction({ action: "setMatchClock", matchId: activeMatch.id, clockMode, elapsedSeconds, periodElapsedSeconds, clockStartedAt }, clockMode === "finish_period" ? "Første omgang er avsluttet." : clockMode === "start_second" ? "Andre omgang er startet." : clockMode === "pause" ? "Kampklokken er pauset." : clockMode === "reset" ? "Kampklokken er nullstilt." : "Kampklokken er startet.")}
@@ -801,7 +802,7 @@ function StatsSection({ data }: { data: SeasonData }) {
   const [sortKey, setSortKey] = useState<SortKey>("matches");
   const [descending, setDescending] = useState(true);
   const completedTrainings = data.trainings.filter((training) => training.status === "completed");
-  const completedTrainingIds = new Set(completedTrainings.map((training) => training.id));
+  const completedTrainingIds = new Set(data.trainings.filter((training) => training.status === "completed" && training.attendanceRecorded).map((training) => training.id));
   const cupNames = [...new Set(data.matches.filter((match) => match.matchType === "cup").map((match) => match.cupName || match.competition).filter(Boolean))];
   const completedMatches = data.matches.filter((match) => match.status === "completed" && (scope === "all" || scope === match.matchType || (scope.startsWith("cup:") && match.matchType === "cup" && (match.cupName || match.competition) === scope.slice(4))));
   const completedMatchIds = new Set(completedMatches.map((match) => match.id));
@@ -847,7 +848,7 @@ function PlayerUsageOverview({ data, matches }: { data: SeasonData; matches: Mat
   type OverviewSortKey = "name" | "attendance" | "playingShare" | "playingTime";
   const positionColors: Record<PositionStat["position"], string> = { goalkeeper: "#7c3aed", left_wing: "#0284c7", left_back: "#0891b2", center: "#059669", right_back: "#d97706", right_wing: "#dc2626" };
   const [sortKey, setSortKey] = useState<OverviewSortKey>("name");
-  const completedTrainings = data.trainings.filter((training) => training.status === "completed");
+  const completedTrainings = data.trainings.filter((training) => training.status === "completed" && training.attendanceRecorded);
   const completedTrainingIds = new Set(completedTrainings.map((training) => training.id));
   const rows = data.players.filter((player) => Boolean(player.active)).map((player) => {
     const totals = new Map<PositionStat["position"], { seconds: number; stints: number }>();
@@ -883,7 +884,7 @@ function PlayerUsageOverview({ data, matches }: { data: SeasonData; matches: Mat
   const playersWithMatches = rows.filter((row) => row.selectedMatches > 0);
   const averagePlayingShare = playersWithMatches.length ? Math.round((playersWithMatches.reduce((sum, row) => sum + row.playingShare, 0) / playersWithMatches.length) * 100) : 0;
 
-  return <SectionCard eyebrow="Kun for administratorer" title="Spillerbruk og helhetsbilde" count={`${matches.length} kamper · ${completedTrainings.length} treninger`}>
+  return <SectionCard eyebrow="Kun for administratorer" title="Spillerbruk og helhetsbilde" count={`${matches.length} kamper · ${completedTrainings.length} oppmøter registrert`}>
     <div className="space-y-7">
       <section>
         <div className="mb-3"><h3 className="font-black">Posisjonsfordeling</h3><p className="mt-1 text-sm text-muted-foreground">Viser hvordan hver spillers registrerte spilletid er fordelt mellom posisjonene.</p></div>
@@ -986,7 +987,7 @@ function PlayerDialog({ open, saving, onOpenChange, onSave }: { open: boolean; s
 
 function PlayerProfileDialog({ player, data, open, onOpenChange }: { player: Player | null; data: SeasonData; open: boolean; onOpenChange: (open: boolean) => void }) {
   if (!player) return null;
-  const completedTrainings = data.trainings.filter((training) => training.status === "completed");
+  const completedTrainings = data.trainings.filter((training) => training.status === "completed" && training.attendanceRecorded);
   const completedTrainingIds = new Set(completedTrainings.map((training) => training.id));
   const attendedTrainings = data.attendance.filter((entry) => entry.playerId === player.id && completedTrainingIds.has(entry.trainingId)).length;
   const matchHistory = data.matchPlayers.filter((entry) => entry.playerId === player.id).map((entry) => ({ entry, match: data.matches.find((match) => match.id === entry.matchId) })).filter((item): item is { entry: MatchPlayer; match: Match } => Boolean(item.match)).sort((a, b) => `${b.match.date}T${b.match.startTime || "00:00"}`.localeCompare(`${a.match.date}T${a.match.startTime || "00:00"}`));
@@ -1283,7 +1284,7 @@ function playerSecondsForMatch(playerId: number, match: Match, roster: MatchPlay
   let total = 0;
   let onCourt = position !== "bench";
   let activeSince = 0;
-  for (const substitution of [...substitutions].sort((a, b) => a.id - b.id)) {
+  for (const substitution of [...substitutions].sort((a, b) => a.matchSecond - b.matchSecond || a.id - b.id)) {
     if (substitution.swap) continue;
     const at = Math.min(elapsedSeconds, Math.max(0, substitution.matchSecond));
     if (substitution.playerOutId === playerId && onCourt) {
