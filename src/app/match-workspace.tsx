@@ -325,15 +325,16 @@ export function MatchWorkspace({
           <Button variant="outline" onClick={() => setPlayerChanging(null)}>Avbryt</Button>
         </div>}
 
-        {match.internalMatch && <div className="space-y-5">
-          {[{ side: match.homeAway === "away" ? "ours" : "opponent", courtLabel: "Bortelag" }, { side: match.homeAway === "away" ? "opponent" : "ours", courtLabel: "Hjemmelag" }].map(({ side, courtLabel }) => {
-            const teamSide = side as "ours" | "opponent";
-            const teamRoster = roster.filter((entry) => (entry.teamSide ?? "ours") === teamSide);
-            const teamName = teamSide === "ours" ? match.team : match.opponent;
-            const teamChangingPlayer = roster.find((entry) => entry.playerId === playerChanging)?.teamSide ?? "ours";
-            return <MatchTeamView key={courtLabel} side={teamSide} courtLabel={courtLabel} teamName={teamName} roster={teamRoster} players={players} events={events} currentPositions={currentPositions} playingSeconds={playingSeconds} redPlayerIds={redPlayerIds} canRecord={canRecord} playerGoingOut={playerGoingOut?.playerId && teamRoster.some((entry) => entry.playerId === playerGoingOut.playerId) ? playerGoingOut : null} playerChanging={teamChangingPlayer === teamSide ? playerChanging : null} changingPlayerPosition={teamChangingPlayer === teamSide ? changingPlayerPosition : null} onSelectPlayer={selectPlayer} />;
-          })}
-        </div>}
+        {match.internalMatch && (() => {
+          const awaySide = match.homeAway === "away" ? "ours" : "opponent";
+          const homeSide = awaySide === "ours" ? "opponent" : "ours";
+          const viewFor = (side: "ours" | "opponent", courtLabel: string) => {
+            const teamRoster = roster.filter((entry) => (entry.teamSide ?? "ours") === side);
+            const changingSide = roster.find((entry) => entry.playerId === playerChanging)?.teamSide ?? "ours";
+            return { side, courtLabel, teamName: side === "ours" ? match.team : match.opponent, roster: teamRoster, players, events, currentPositions, playingSeconds, redPlayerIds, canRecord, playerGoingOut: playerGoingOut?.playerId && teamRoster.some((entry) => entry.playerId === playerGoingOut.playerId) ? playerGoingOut : null, playerChanging: changingSide === side ? playerChanging : null, changingPlayerPosition: changingSide === side ? changingPlayerPosition : null, onSelectPlayer: selectPlayer };
+          };
+          return <InternalMatchView away={viewFor(awaySide, "Bortelag")} home={viewFor(homeSide, "Hjemmelag")} />;
+        })()}
 
         {!match.internalMatch && <section>
           <div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="text-lg font-bold">Kampbane</h3><p className="text-sm text-muted-foreground">Trykk på en spiller eller motstanderlaget for å registrere.</p></div><Badge variant="outline"><Users /> {roster.length} spillere</Badge></div>
@@ -509,6 +510,77 @@ function MatchTeamView({ side, courtLabel, teamName, roster, players, events, cu
   </section>;
 }
 
+type InternalTeamViewProps = {
+  side: "ours" | "opponent";
+  courtLabel: string;
+  teamName: string;
+  roster: MatchPlayer[];
+  players: Player[];
+  events: MatchEvent[];
+  currentPositions: Map<number, Position>;
+  playingSeconds: Map<number, number>;
+  redPlayerIds: Set<number>;
+  canRecord: boolean;
+  playerGoingOut: { playerId: number; reason: "two_min" | "red" } | null;
+  playerChanging: number | null;
+  changingPlayerPosition: Position | null;
+  onSelectPlayer: (player: Player, side: "ours" | "opponent") => void;
+};
+
+function InternalMatchView({ away, home }: { away: InternalTeamViewProps; home: InternalTeamViewProps }) {
+  const teamOnPitch = (team: InternalTeamViewProps, isAway: boolean) => {
+    const playerIds = new Set(team.roster.map((entry) => entry.playerId));
+    const teamPlayers = team.players.filter((player) => playerIds.has(player.id));
+    const positioned = [...team.currentPositions.entries()].filter(([id]) => playerIds.has(id));
+    return courtPositions.map((position) => {
+      const playerId = positioned.find(([, p]) => p === position)?.[0];
+      const player = team.players.find((p) => p.id === playerId);
+      const base = positionLayout[position];
+      const flip = (value: string) => `${100 - Number.parseFloat(value)}%`;
+      const layout = isAway ? { ...base, left: flip(base.left), top: flip(base.top) } : base;
+      if (!player) return <div key={`${team.side}-${position}`} style={{ left: layout.left, top: layout.top }} className="absolute z-10 w-[21%] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-dashed border-white/80 bg-white/20 px-1 py-1 text-center text-[9px] font-bold text-white/95 sm:text-[11px]">{base.label}</div>;
+      const selectionState = team.playerChanging === player.id ? "source" : team.playerChanging !== null ? "candidate" : "none";
+      return <CourtPlayerButton key={`${team.side}-${position}`} player={player} displayName={compactName(player.name, teamPlayers)} position={position} layout={layout} seconds={team.playingSeconds.get(player.id) ?? 0} marks={disciplineMarks(team.events, player.id)} captain={Boolean(team.roster.find((entry) => entry.playerId === player.id)?.captain)} selectionState={selectionState} disabled={!team.canRecord || Boolean(team.playerGoingOut) || selectionState === "source"} onClick={() => team.onSelectPlayer(player, team.side)} />;
+    });
+  };
+
+  const bench = (team: InternalTeamViewProps) => <div className="flex flex-wrap gap-1.5">
+    {team.roster.filter((entry) => (team.currentPositions.get(entry.playerId) ?? "bench") === "bench").map((entry) => {
+      const player = team.players.find((item) => item.id === entry.playerId);
+      if (!player) return null;
+      const marks = disciplineMarks(team.events, player.id);
+      const unavailable = team.redPlayerIds.has(player.id);
+      const isSource = team.playerChanging === player.id;
+      const isCandidate = team.playerChanging !== null && team.changingPlayerPosition !== "bench" && !isSource && !unavailable;
+      const unavailableDuringChange = team.playerChanging !== null && !isCandidate && !isSource;
+      return <button key={player.id} type="button" disabled={!team.canRecord || unavailable || isSource || unavailableDuringChange} onClick={() => team.onSelectPlayer(player, team.side)} className={`min-h-10 rounded-lg border px-2 py-1.5 text-left shadow-sm transition disabled:opacity-60 ${team.playerGoingOut && !unavailable ? "animate-pulse border-orange-500 bg-orange-50" : isSource ? "border-amber-500 bg-amber-50 ring-2 ring-amber-300/70" : isCandidate ? "animate-pulse border-sky-700 bg-sky-50 ring-2 ring-sky-300/80" : unavailable ? "border-red-300 bg-red-50" : "border-slate-300 bg-white hover:border-primary"}`}>
+        <span className="flex items-center gap-1 text-[11px] font-bold sm:text-xs">{entry.captain && <CaptainMark />}{playerLabel(player)}<PlayerMarks marks={marks} /></span>
+        <span className="block text-[10px] text-muted-foreground">{unavailable ? "Rødt kort" : `${formatPlayingTime(team.playingSeconds.get(player.id) ?? 0)} på banen`}</span>
+      </button>;
+    })}
+  </div>;
+
+  const teamStrip = (team: InternalTeamViewProps) => <div className="rounded-xl border bg-slate-50 p-2.5 sm:p-3">
+    <div className="mb-2 flex items-center justify-between gap-2"><p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{team.courtLabel} · {team.teamName}</p><Badge variant="outline" className="text-[10px]">{team.roster.length} spillere</Badge></div>
+    {bench(team)}
+  </div>;
+
+  return <section className="rounded-2xl border p-2.5 sm:p-3">
+    {teamStrip(away)}
+    <div className="relative mx-auto my-2 aspect-[16/10] w-full overflow-hidden rounded-2xl border-4 border-white bg-[#efa764] shadow-[0_0_0_1px_#d7833e] sm:my-3">
+      <div className="absolute inset-x-0 top-1/2 border-t-2 border-white/90" />
+      <div className="absolute left-1/2 top-1/2 size-16 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/90 sm:size-24" />
+      <div className="absolute left-1/2 top-0 h-[9%] w-[30%] -translate-x-1/2 border-x-2 border-b-2 border-white/90" />
+      <div className="absolute bottom-0 left-1/2 h-[9%] w-[30%] -translate-x-1/2 border-x-2 border-t-2 border-white/90" />
+      <div className="absolute left-1/2 top-0 h-[27%] w-[62%] -translate-x-1/2 rounded-b-[50%] border-x-2 border-b-2 border-white/80" />
+      <div className="absolute bottom-0 left-1/2 h-[27%] w-[62%] -translate-x-1/2 rounded-t-[50%] border-x-2 border-t-2 border-white/80" />
+      {teamOnPitch(away, true)}
+      {teamOnPitch(home, false)}
+    </div>
+    {teamStrip(home)}
+  </section>;
+}
+
 function MatchMomentum({ match, players, roster, events, substitutions }: { match: Match; players: Player[]; roster: MatchPlayer[]; events: MatchEvent[]; substitutions: MatchSubstitution[] }) {
   const matchEnd = Math.max(0, Number(match.elapsedSeconds || match.periodCount * match.periodMinutes * 60));
   const periodSeconds = Math.max(60, Number(match.periodMinutes || 20) * 60);
@@ -558,8 +630,8 @@ function positionsAtSecond(roster: MatchPlayer[], substitutions: MatchSubstituti
 
 type DisciplineMarks = { yellow: boolean; twoMinutes: number; red: boolean };
 
-function CourtPlayerButton({ player, displayName, position, seconds, marks, captain, selectionState, disabled, onClick }: { player: Player; displayName: string; position: CourtPosition; seconds: number; marks: DisciplineMarks; captain: boolean; selectionState: "none" | "source" | "candidate"; disabled: boolean; onClick: () => void }) {
-  const layout = positionLayout[position];
+function CourtPlayerButton({ player, displayName, position, layout: customLayout, seconds, marks, captain, selectionState, disabled, onClick }: { player: Player; displayName: string; position: CourtPosition; layout?: { left: string; top: string; label: string }; seconds: number; marks: DisciplineMarks; captain: boolean; selectionState: "none" | "source" | "candidate"; disabled: boolean; onClick: () => void }) {
+  const layout = customLayout ?? positionLayout[position];
   return <button type="button" title={`${player.name} · ${layout.label}`} disabled={disabled} onClick={onClick} style={{ left: layout.left, top: layout.top }} className={`absolute z-10 w-[23%] max-w-36 -translate-x-1/2 -translate-y-1/2 rounded-xl border-2 px-1.5 py-1.5 text-center shadow-md transition sm:px-2 sm:py-2 ${selectionState === "candidate" ? "animate-pulse border-sky-700 bg-sky-50 text-sky-950 ring-4 ring-sky-300/80" : selectionState === "source" ? "border-amber-500 bg-amber-50 text-amber-950 ring-4 ring-amber-300/70" : "border-white bg-white text-slate-950 hover:scale-105"} disabled:opacity-70`}>
     <span className="flex items-center justify-center gap-1 text-[11px] font-black leading-tight sm:text-sm">{captain && <CaptainMark />}<span className="truncate">{displayName}</span></span>
     <span className="mt-0.5 block truncate text-[9px] text-muted-foreground sm:text-[11px]">{position === "goalkeeper" && <Shield className="mr-0.5 inline size-3" />}{formatPlayingTime(seconds)}</span>
