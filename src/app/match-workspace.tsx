@@ -177,14 +177,17 @@ export function MatchWorkspace({
   const initialPositions = useMemo(() => normalizeInitialPositions(roster), [roster]);
   const currentPositions = useMemo(() => {
     const positions = new Map(initialPositions);
-    for (const substitution of [...substitutions].sort((a, b) => a.id - b.id)) {
+    for (const substitution of [...substitutions].sort((a, b) => a.matchSecond - b.matchSecond || a.id - b.id)) {
       positions.set(substitution.playerOutId, substitution.swap ? substitution.playerInPreviousPosition ?? "bench" : "bench");
       positions.set(substitution.playerInId, substitution.position);
     }
     return positions;
   }, [initialPositions, substitutions]);
-  const playingSeconds = useMemo(() => calculatePlayingSeconds(roster, substitutions, clockSeconds), [roster, substitutions, clockSeconds]);
   const positionStatistics = useMemo(() => calculatePositionStatistics(roster, substitutions, clockSeconds), [roster, substitutions, clockSeconds]);
+  const playingSeconds = useMemo(
+    () => new Map([...positionStatistics].map(([playerId, stats]) => [playerId, stats.totalSeconds])),
+    [positionStatistics],
+  );
 
   const rosterPayload = roster.map((entry) => {
     const position = initialPositions.get(entry.playerId) ?? "bench";
@@ -678,23 +681,6 @@ function normalizeInitialPositions(roster: MatchPlayer[]) {
     positions.set(entry.playerId, position);
   }
   return positions;
-}
-
-function calculatePlayingSeconds(roster: MatchPlayer[], substitutions: MatchSubstitution[], elapsedSeconds: number) {
-  const initial = normalizeInitialPositions(roster);
-  const totals = new Map<number, number>(roster.map((entry) => [entry.playerId, 0]));
-  const activeSince = new Map<number, number>();
-  for (const [playerId, position] of initial) if (position !== "bench") activeSince.set(playerId, 0);
-  for (const substitution of [...substitutions].sort((a, b) => a.id - b.id)) {
-    if (substitution.swap) continue;
-    const at = Math.min(elapsedSeconds, Math.max(0, substitution.matchSecond));
-    const outgoingSince = activeSince.get(substitution.playerOutId);
-    if (outgoingSince !== undefined) totals.set(substitution.playerOutId, (totals.get(substitution.playerOutId) ?? 0) + Math.max(0, at - outgoingSince));
-    activeSince.delete(substitution.playerOutId);
-    activeSince.set(substitution.playerInId, at);
-  }
-  for (const [playerId, since] of activeSince) totals.set(playerId, (totals.get(playerId) ?? 0) + Math.max(0, elapsedSeconds - since));
-  return totals;
 }
 
 function playerLabel(player: Player) {
