@@ -3,6 +3,7 @@ export type TrackedPosition = TrackedCourtPosition | "bench";
 
 type RosterEntry = {
   playerId: number;
+  teamSide?: "ours" | "opponent";
   starter: number | boolean;
   goalkeeper: number | boolean;
   position: TrackedPosition;
@@ -104,19 +105,23 @@ export function calculatePositionStatistics(roster: RosterEntry[], substitutions
 }
 
 function normalizePositions(roster: RosterEntry[]) {
-  const used = new Set<TrackedCourtPosition>();
+  const used = new Map<string, Set<TrackedCourtPosition>>();
   const positions = new Map<number, TrackedPosition>();
-  let fallbackIndex = 0;
+  const fallbackIndices = new Map<string, number>();
   for (const entry of roster) {
+    const side = entry.teamSide ?? "ours";
+    const sideUsed = used.get(side) ?? new Set<TrackedCourtPosition>();
+    let fallbackIndex = fallbackIndices.get(side) ?? 0;
     let position: TrackedPosition = validPositions.has(entry.position) ? entry.position : "bench";
     if (position === "bench" && Boolean(entry.goalkeeper)) position = "goalkeeper";
     if (position === "bench" && Boolean(entry.starter)) {
-      while (fallbackIndex < fallbackOrder.length && used.has(fallbackOrder[fallbackIndex])) fallbackIndex += 1;
+      while (fallbackIndex < fallbackOrder.length && sideUsed.has(fallbackOrder[fallbackIndex])) fallbackIndex += 1;
       position = fallbackOrder[fallbackIndex] ?? "bench";
-      fallbackIndex += 1;
+      fallbackIndices.set(side, fallbackIndex + 1);
     }
-    if (position !== "bench" && used.has(position)) position = "bench";
-    if (position !== "bench") used.add(position);
+    if (position !== "bench" && sideUsed.has(position)) position = "bench";
+    if (position !== "bench") sideUsed.add(position);
+    used.set(side, sideUsed);
     positions.set(entry.playerId, position);
   }
   return positions;
