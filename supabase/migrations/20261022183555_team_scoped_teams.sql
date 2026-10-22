@@ -24,9 +24,9 @@ revoke all on table public.teams, public.team_memberships from public, anon, aut
 insert into public.team_memberships(user_id,team_slug,role,active)
 select id,'sthk2015',role,active from public.app_users
 on conflict (user_id,team_slug) do nothing;
-insert into public.team_memberships(user_id,team_slug,role)
-select id,'sthk2014','admin' from public.app_users
-where active and lower(email) in ('ivanhansen1985@hotmail.com','espenellingsen@outlook.com')
+insert into public.team_memberships(user_id,team_slug,role,active)
+select user_id,'sthk2014','admin',active from public.team_memberships
+where team_slug='sthk2015' and role='admin' and active
 on conflict (user_id,team_slug) do update set role='admin',active=true;
 
 -- Keep login analytics inside the selected team, even when an administrator
