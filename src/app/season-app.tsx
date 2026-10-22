@@ -432,7 +432,7 @@ export function SeasonApp() {
   const visibleMatchEvents = data.matchEvents;
   const visibleMatchSubstitutions = data.matchSubstitutions;
   const availableTeams = data.currentUser?.availableTeams ?? [];
-  const teamTitle = data.currentUser?.teamName ?? "STHK 2015";
+
 
 
 
