@@ -209,10 +209,17 @@ begin
 end $$;
 create or replace function public.guard_app_user_team_update()
 returns trigger language plpgsql security definer set search_path = '' as $$
+declare active_slug text := nullif(current_setting('app.active_team_slug',true),'');
 begin
+  -- First login links an already-approved user to auth.uid() before the
+  -- membership lookup has initialized the active team for this transaction.
+  if active_slug is null and old.account_user_id is null and new.account_user_id=auth.uid() then
+    return new;
+  end if;
+  if active_slug is null then raise exception 'Lagtilgang er ikke initialisert.' using errcode='42501'; end if;
   if not exists (
     select 1 from public.team_memberships
-    where user_id=old.id and team_slug=public.current_team_slug()
+    where user_id=old.id and team_slug=active_slug
   ) then
     raise exception 'Du har ikke tilgang til denne brukeren i valgt lag.' using errcode='42501';
   end if;
