@@ -1,4 +1,14 @@
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "https://vlvxdtgoonxbiabkcqdp.supabase.co").replace(/\/$/, "");
+const teamStorageKey = "sthk-active-team-v1";
+
+export function getActiveTeamSlug() {
+  if (typeof window === "undefined") return "sthk2015";
+  return window.localStorage.getItem(teamStorageKey) || "sthk2015";
+}
+
+export function setActiveTeamSlug(slug: string) {
+  if (typeof window !== "undefined") window.localStorage.setItem(teamStorageKey, slug);
+}
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publishable_SGUk0m5rE31s_x-5rxeITA_GUxa1eCx";
 
 export type AuthSessionPayload = { accessToken: string; refreshToken: string; expiresIn: number };
@@ -18,6 +28,7 @@ async function jsonRequest(path: string, init: RequestInit = {}, accessToken?: s
   const headers = new Headers(init.headers);
   headers.set("apikey", publishableKey);
   headers.set("content-type", "application/json");
+  if (path.startsWith("/rest/v1/rpc/")) headers.set("x-team-slug", getActiveTeamSlug());
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
   const response = await fetch(`${supabaseUrl}${path}`, { ...init, headers });
   const body = await response.json().catch(() => ({}));
