@@ -142,7 +142,7 @@ async function fetchSeasonData(accessToken: string): Promise<SeasonData> {
     fetchMatchEnhancements<MatchEnhancements>(accessToken),
   ]);
   const trainingObservations = data.currentUser?.role === "admin" ? await fetchTrainingObservations<TrainingObservation[]>(accessToken) : [];
-  const seriesTable = data.currentUser?.role === "admin" && data.currentUser?.teamSlug === "sthk2015" ? await fetchSeriesTable().catch(() => null) : null;
+  const seriesTable = data.currentUser?.role === "admin" ? await fetchSeriesTable().catch(() => null) : null;
   return { ...emptyData, ...data, ...cupData, ...matchEnhancements, trainingObservations, userLoginStats, seriesTable };
 }
 
