@@ -21,13 +21,19 @@ alter table public.teams enable row level security;
 alter table public.team_memberships enable row level security;
 revoke all on table public.teams, public.team_memberships from public, anon, authenticated;
 
-insert into public.team_memberships(user_id,team_slug,role)
-select id,'sthk2015',role from public.app_users
+insert into public.team_memberships(user_id,team_slug,role,active)
+select id,'sthk2015',role,active from public.app_users
 on conflict (user_id,team_slug) do nothing;
 insert into public.team_memberships(user_id,team_slug,role)
 select id,'sthk2014','admin' from public.app_users
-where lower(email) in ('ivanhansen1985@hotmail.com','espenellingsen@outlook.com')
+where active and lower(email) in ('ivanhansen1985@hotmail.com','espenellingsen@outlook.com')
 on conflict (user_id,team_slug) do update set role='admin',active=true;
+
+-- Keep login analytics inside the selected team, even when an administrator
+-- account belongs to more than one team.
+alter table public.user_login_sessions add column team_slug text not null default 'sthk2015' references public.teams(slug);
+alter table public.user_login_sessions drop constraint user_login_sessions_pkey;
+alter table public.user_login_sessions add primary key(session_id,team_slug);
 
 alter table public.players add column team_slug text not null default 'sthk2015' references public.teams(slug);
 alter table public.trainings add column team_slug text not null default 'sthk2015' references public.teams(slug);
@@ -286,11 +292,11 @@ declare
   team_slug_value text := public.current_team_slug();
   current_session_id uuid := nullif(auth.jwt()->>'session_id','')::uuid;
 begin
-  if current_session_id is not null then insert into public.user_login_sessions(session_id,app_user_id) values(current_session_id,u.id) on conflict(session_id) do nothing; end if;
+  if current_session_id is not null then insert into public.user_login_sessions(session_id,app_user_id,team_slug) values(current_session_id,u.id,team_slug_value) on conflict(session_id,team_slug) do nothing; end if;
   if u.role<>'admin' then return '[]'::jsonb; end if;
   return (select coalesce(jsonb_agg(jsonb_build_object('userId',au.id,'loginCount',coalesce(activity.login_count,0),'lastLoginAt',greatest(activity.last_login_at,auth_user.last_sign_in_at)) order by au.name),'[]')
     from public.app_users au join public.team_memberships tm on tm.user_id=au.id and tm.team_slug=team_slug_value
-    left join (select app_user_id,count(*)::bigint login_count,max(signed_in_at) last_login_at from public.user_login_sessions group by app_user_id) activity on activity.app_user_id=au.id
+    left join (select app_user_id,count(*)::bigint login_count,max(signed_in_at) last_login_at from public.user_login_sessions where team_slug=team_slug_value group by app_user_id) activity on activity.app_user_id=au.id
     left join auth.users auth_user on auth_user.id=au.account_user_id where tm.active);
 end $$;
 
