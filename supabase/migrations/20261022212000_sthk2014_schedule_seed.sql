@@ -1,5 +1,7 @@
 begin;
 
+select set_config('app.active_team_slug','sthk2014',true);
+
 alter table public.matches add column if not exists source_match_key text;
 alter table public.trainings add column if not exists source_key text;
 create unique index if not exists matches_source_match_key_uidx on public.matches(source_match_key) where source_match_key is not null;
@@ -29,7 +31,7 @@ values
   ('handballno:8420713','2027-04-03'::date,'18:00','Kabelvåg','Stokmarknes Idrettslag','away','J12 NordNorge-serien - 02 2026/27','league','Polarkrafthallen flerbrukshall',null,null,2,20,'pre_match',0,0,0,false,'planned',null)
 on conflict (source_match_key) where source_match_key is not null do update set date=excluded.date,start_time=excluded.start_time,opponent=excluded.opponent,team=excluded.team,home_away=excluded.home_away,competition=excluded.competition,match_type=excluded.match_type,venue=excluded.venue,our_score=excluded.our_score,opponent_score=excluded.opponent_score,period_count=excluded.period_count,period_minutes=excluded.period_minutes,match_phase=excluded.match_phase,current_period=excluded.current_period,period_elapsed_seconds=excluded.period_elapsed_seconds,elapsed_seconds=excluded.elapsed_seconds,clock_running=excluded.clock_running,status=excluded.status,completed_at=excluded.completed_at;
 
--- Hadsel kommune skolerute 2026/27: sessions are omitted during school holidays and pupil-free dates.
+-- 58 future sessions, following Hadsel kommune skolerute 2026/27; school holidays are omitted.
 with candidate_dates as (select session_date::date as session_date from generate_series('2026-10-26'::date,'2027-06-18'::date,interval '1 day') as days(session_date)), sessions as (select session_date, case when extract(isodow from session_date)=1 then '18:00' else '19:00' end as start_time, case when extract(isodow from session_date)=1 then 90 else 60 end as duration_minutes from candidate_dates where extract(isodow from session_date) in (1,3) and session_date not between '2026-12-21' and '2027-01-03' and session_date not between '2027-02-22' and '2027-02-26' and session_date not between '2027-03-22' and '2027-03-29' and session_date <> '2027-05-17')
 insert into public.trainings(source_key,date,start_time,duration_minutes,title,status)
 select 'sthk2014-training:'||session_date::text,session_date,start_time,duration_minutes,'Lagstrening','planned' from sessions
