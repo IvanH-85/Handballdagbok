@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 38012)
+Total output lines: 1352
+
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -56,7 +59,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { trainingThemeOptions } from "@/lib/training-themes";
 import { calculatePositionStatistics, positionLabels, type PositionStat } from "@/lib/match-position-stats";
 import { fetchSeriesTable, type SeriesTableData } from "@/lib/series-standings";
-import { applyAction, clearAuthCallback, fetchCupSnapshot, fetchLiveMatch, fetchMatchEnhancements, fetchSnapshot, fetchTrainingObservations, fetchUserLoginActivity, readAuthCallback, refreshSession, requestPasswordReset, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
+import { applyAction, clearAuthCallback, fetchCupSnapshot, fetchLiveMatch, fetchMatchEnhancements, fetchSnapshot, fetchTrainingObservations, fetchUserLoginActivity, getActiveTeamSlug, readAuthCallback, refreshSession, requestPasswordReset, setActiveTeamSlug, signIn, signOut as supabaseSignOut, signUp, updatePassword, type AuthSessionPayload } from "@/lib/supabase-api";
 import { MatchWorkspace } from "./match-workspace";
 import { TrainingWorkspace, type Exercise, type TrainingExercise, type TrainingObservation } from "./training-workspace";
 
@@ -67,7 +70,8 @@ type MatchPhase = "pre_match" | "first_half" | "halftime" | "second_half" | "com
 type AppRole = "admin" | "parent" | "match_registrar";
 type AppUser = { id: number; name: string; email: string | null; phone: string; role: AppRole; active: number | boolean; accountUserId: string | null; createdAt: string };
 type UserLoginStat = { userId: number; loginCount: number; lastLoginAt: string | null };
-type CurrentUser = { id: number; name: string; email: string | null; role: AppRole };
+type TeamOption = { slug: string; name: string };
+type CurrentUser = { id: number; name: string; email: string | null; role: AppRole; teamSlug?: string; teamName?: string; availableTeams?: TeamOption[] };
 type Training = { id: number; date: string; startTime: string; durationMinutes: number; title: string; theme: string; plan: string; notes: string; status: Exclude<ActivityStatus, "live">; completedAt: string | null; createdAt: string; attendanceRecorded: boolean };
 type Attendance = { trainingId: number; playerId: number };
 type Position = "goalkeeper" | "right_wing" | "right_back" | "center" | "left_back" | "left_wing" | "bench";
@@ -134,13 +138,14 @@ function readStoredSession(): AuthSession | null {
 
 async function fetchSeasonData(accessToken: string): Promise<SeasonData> {
   const data = await fetchSnapshot<Partial<SeasonData>>(accessToken);
+  if (data.currentUser?.teamSlug) setActiveTeamSlug(data.currentUser.teamSlug);
   const [cupData, userLoginStats, matchEnhancements] = await Promise.all([
     fetchCupSnapshot<CupData>(accessToken),
     fetchUserLoginActivity<UserLoginStat[]>(accessToken),
     fetchMatchEnhancements<MatchEnhancements>(accessToken),
   ]);
   const trainingObservations = data.currentUser?.role === "admin" ? await fetchTrainingObservations<TrainingObservation[]>(accessToken) : [];
-  const seriesTable = data.currentUser?.role === "admin" ? await fetchSeriesTable().catch(() => null) : null;
+  const seriesTable = data.currentUser?.role === "admin" && data.currentUser?.teamSlug === "sthk2015" ? await fetchSeriesTable().catch(() => null) : null;
   return { ...emptyData, ...data, ...cupData, ...matchEnhancements, trainingObservations, userLoginStats, seriesTable };
 }
 
@@ -165,6 +170,7 @@ export function SeasonApp() {
   const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState<number | null>(null);
   const [previewRole, setPreviewRole] = useState<AppRole>("admin");
+  const [selectedTeamSlug, setSelectedTeamSlug] = useState(getActiveTeamSlug);
   const sessionRef = useRef<AuthSession | null>(null);
   const refreshPromiseRef = useRef<Promise<AuthSession> | null>(null);
 
@@ -203,13 +209,16 @@ export function SeasonApp() {
     const token = accessToken ?? await getAccessToken();
     try {
       const freshData = await fetchSeasonData(token);
+      if (freshData.currentUser?.teamSlug) setSelectedTeamSlug(freshData.currentUser.teamSlug);
       setData(freshData);
       setError("");
     } catch (err) {
       if ((err as { status?: number }).status === 401) {
         try {
           const refreshed = await refreshAuthSession();
-          setData(await fetchSeasonData(refreshed.accessToken));
+          const freshData = await fetchSeasonData(refreshed.accessToken);
+          if (freshData.currentUser?.teamSlug) setSelectedTeamSlug(freshData.currentUser.teamSlug);
+          setData(freshData);
           setError("");
           return;
         } catch {
@@ -345,6 +354,23 @@ export function SeasonApp() {
     }
   }
 
+  async function switchTeam(slug: string) {
+    if (!slug || slug === selectedTeamSlug) return;
+    setSelectedTeamSlug(slug);
+    setActiveTeamSlug(slug);
+    setActiveTab("overview");
+    setActiveMatchId(null);
+    setActiveCupId(null);
+    setLoading(true);
+    try {
+      await loadSeasonData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kunne ikke bytte lag.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function runAction(payload: Record<string, unknown>, successMessage: string) {
     setSaving(true);
     setError("");
@@ -398,6 +424,16 @@ export function SeasonApp() {
   const canRecordMatch = (matchId: number) => isAdmin || (actualIsAdmin && effectiveRole === "match_registrar") || (!actualIsAdmin && assignedMatchIds.has(matchId));
   const visibleMatchEvents = data.matchEvents;
   const visibleMatchSubstitutions = data.matchSubstitutions;
+  const availableTeams = data.currentUser?.availableTeams ?? [];
+  const teamTitle = data.currentUser?.teamName ?? "STHK 2015";
+
+  useEffect(() => {
+    document.title = `${teamTitle} · Sesongdagbok`;
+    const applicationName = document.querySelector<HTMLMetaElement>('meta[name="application-name"]');
+    const appleTitle = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
+    if (applicationName) applicationName.content = teamTitle;
+    if (appleTitle) appleTitle.content = teamTitle;
+  }, [teamTitle]);
 
   return (
     <main className="min-h-screen pb-16">
@@ -409,11 +445,12 @@ export function SeasonApp() {
               <img className="size-20 shrink-0 rounded-full bg-white object-cover shadow-lg ring-4 ring-white/20 sm:size-24" src="./sthk-logo.jpg" alt="Stokmarknes Håndballklubb" width={96} height={96} />
               <div className="min-w-0">
                 <p className="text-sm font-bold uppercase tracking-[0.12em] text-red-100">Stokmarknes Håndballklubb</p>
-                <h1 className="mt-1 flex flex-wrap items-baseline gap-x-2 text-3xl font-black tracking-tight sm:text-4xl"><span>Sesongdagbok</span><span className="text-xl text-red-100 sm:text-2xl">STHK 2015</span></h1>
+                <h1 className="mt-1 flex flex-wrap items-baseline gap-x-2 text-3xl font-black tracking-tight sm:text-4xl"><span>Sesongdagbok</span><span className="text-xl text-red-100 sm:text-2xl">{teamTitle}</span></h1>
                 <p className="mt-1 hidden max-w-xl text-sm leading-6 text-red-50 sm:block">Treninger, laguttak, kamper og utvikling gjennom sesongen.</p>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {actualIsAdmin && availableTeams.length > 1 && <div className="hidden w-40 rounded-2xl border border-white/20 bg-black/10 p-2 sm:block"><p className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wider text-red-100">Aktivt lag</p><Select value={selectedTeamSlug} onValueChange={(value) => void switchTeam(value)}><SelectTrigger className="h-10 border-white/20 bg-white text-slate-950"><SelectValue /></SelectTrigger><SelectContent>{availableTeams.map((team) => <SelectItem key={team.slug} value={team.slug}>{team.name}</SelectItem>)}</SelectContent></Select></div>}
               {actualIsAdmin ? <div className="hidden w-40 rounded-2xl border border-white/20 bg-black/10 p-2 sm:block"><p className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wider text-red-100">Se løsningen som</p><Select value={previewRole} onValueChange={(value) => setPreviewRole(value as AppRole)}><SelectTrigger className="h-10 border-white/20 bg-white text-slate-950"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="admin">Administrator</SelectItem><SelectItem value="parent">Foresatt</SelectItem><SelectItem value="match_registrar">Kampregistrator</SelectItem></SelectContent></Select></div> : <div className="hidden rounded-2xl border border-white/20 bg-black/10 px-4 py-3 text-right sm:block"><p className="text-xs font-bold uppercase tracking-wider text-red-100">{data.currentUser ? roleLabel(data.currentUser.role) : "Sesong"}</p><p className="font-black">{data.currentUser?.name ?? "J12 · 2026/27"}</p></div>}
               <Button aria-label="Logg ut" title="Logg ut" className="border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white" size="icon" variant="outline" onClick={() => void signOut()}><LogOut /></Button>
             </div>
@@ -422,6 +459,7 @@ export function SeasonApp() {
       </header>
 
       <div className="mx-auto mt-4 max-w-6xl px-3 sm:px-6">
+        {actualIsAdmin && availableTeams.length > 1 && <div className="mb-4 rounded-2xl border bg-white p-3 shadow-sm sm:hidden"><Field label="Aktivt lag" htmlFor="mobile-team-select" className="!mt-0"><Select value={selectedTeamSlug} onValueChange={(value) => void switchTeam(value)}><SelectTrigger id="mobile-team-select"><SelectValue /></SelectTrigger><SelectContent>{availableTeams.map((team) => <SelectItem key={team.slug} value={team.slug}>{team.name}</SelectItem>)}</SelectContent></Select></Field></div>}
         {actualIsAdmin && <div className="mb-4 rounded-2xl border bg-white p-3 shadow-sm sm:hidden"><Field label="Se løsningen som" htmlFor="mobile-role-preview" className="!mt-0"><Select value={previewRole} onValueChange={(value) => setPreviewRole(value as AppRole)}><SelectTrigger id="mobile-role-preview"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="admin">Administrator</SelectItem><SelectItem value="parent">Foresatt</SelectItem><SelectItem value="match_registrar">Kampregistrator</SelectItem></SelectContent></Select></Field></div>}
         {error && <ErrorState message={error} onRetry={() => void refresh(true)} />}
         {actualIsAdmin && previewRole !== "admin" && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-sky-300 bg-sky-50 p-3 text-sm text-sky-950"><div><p className="font-bold">Forhåndsvisning: {roleLabel(previewRole)}</p><p className="mt-0.5">Du ser menyene og valgene slik denne rollen gjør. En virkelig kampregistrator ser bare kampene hen er tildelt.</p></div><Button size="sm" variant="outline" onClick={() => setPreviewRole("admin")}>Tilbake til administrator</Button></div>}
@@ -781,178 +819,7 @@ function MatchCard({ match, data, onEdit, onOpen, onDelete, onReset, onStatus, i
   const goals = data.matchEvents.filter((event) => event.matchId === match.id && !event.annulled && (event.type === "goal_open" || event.type === "goal_penalty")).length;
   const canRecord = canRecordMatch(match.id);
   const hasRegisteredData = match.status === "live" || match.status === "completed" || match.currentPeriod > 0 || match.elapsedSeconds > 0 || match.ourScore !== null || match.opponentScore !== null || data.matchEvents.some((event) => event.matchId === match.id) || data.matchSubstitutions.some((entry) => entry.matchId === match.id) || data.matchComments.some((entry) => entry.matchId === match.id);
-  return <article className="rounded-2xl border bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-primary">{match.competition}</p><p className="mt-1 text-sm font-medium text-muted-foreground">{formatDateWithWeekday(match.date)}</p><h3 className="mt-1 text-lg font-bold">{fixtureLabel(match)}</h3></div><div className="flex flex-col items-end gap-2"><StatusBadge status={match.status} />{match.ourScore !== null && match.opponentScore !== null && <span className="rounded-xl bg-primary px-3 py-2 text-lg font-bold text-primary-foreground">{displayScore(match)}</span>}</div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground"><span className="flex items-center gap-1"><Clock3 className="size-4" /> {match.startTime || "Tid ikke satt"}</span>{match.venue && <span className="flex items-center gap-1"><MapPin className="size-4" /> {match.venue}</span>}<span>{match.homeAway === "away" ? "Bortekamp" : "Hjemmekamp"}</span><span>{match.periodCount || 2} × {match.periodMinutes || 20} min</span></div><div className="mt-3 flex flex-wrap gap-2"><Badge variant="outline">{rosterCount} spillere</Badge><Badge variant="outline">{goals} registrerte mål</Badge>{match.registrarName && <Badge className="bg-sky-100 text-sky-900">Kampregistrator: {match.registrarName}</Badge>}{!isAdmin && canRecord && <Badge className="bg-emerald-100 text-emerald-900">Du kan registrere</Badge>}{data.matchPlayers.some((entry) => entry.matchId === match.id && Boolean(entry.captain)) && <Badge className="bg-amber-100 text-amber-900"><Crown /> Kaptein valgt</Badge>}</div><div className="mt-4 flex flex-wrap gap-2"><Button size="sm" onClick={() => onOpen(match.id)}><Goal /> {canRecord && match.status !== "completed" && match.status !== "cancelled" ? "Åpne kamp" : "Se kamp og laguttak"}</Button>{isAdmin && match.status !== "completed" && match.status !== "cancelled" && <Button size="sm" variant="outline" onClick={() => onEdit(match)}><Pencil /> Rediger</Button>}{isAdmin && (match.status === "completed" || match.status === "cancelled") && <Button size="sm" variant="outline" onClick={() => void onStatus(match.id, "planned")}>Åpne igjen</Button>}{isAdmin && match.status === "planned" && <Button size="sm" variant="ghost" onClick={() => void onStatus(match.id, "cancelled")}>Avlys</Button>}{isAdmin && hasRegisteredData && <ResetMatchButton match={match} onConfirm={() => void onReset(match.id)} />}{isAdmin && match.status !== "completed" && <DeleteButton label="Slett kamp" description="Kampen, laguttaket og alle hendelser blir slettet." onConfirm={() => void onDelete(match.id)} />}</div></article>;
-}
-
-function PlayerSection({ data, loading, onAdd, onOpen, onToggle }: { data: SeasonData; loading: boolean; onAdd: () => void; onOpen: (id: number) => void; onToggle: (player: Player) => Promise<boolean> }) {
-  const players = data.players;
-  const activeCount = players.filter((player) => Boolean(player.active)).length;
-  return <SectionCard eyebrow="Spillerregister" title="Laget" count={`${activeCount} aktive spillere`} actionLabel="Legg til spiller" onAction={onAdd}>
-    {loading ? <LoadingCards /> : players.length === 0 ? <EmptyState icon={UserRound} title="Ingen spillere lagt inn ennå" text="Start med å legge inn spillerne på laget." /> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{players.map((player) => {
-      const completedMatches = data.matchPlayers.filter((entry) => entry.playerId === player.id && data.matches.some((match) => match.id === entry.matchId && match.status === "completed")).length;
-      const guardians = guardianNames(player.id, data);
-      return <article key={player.id} className={`flex items-center justify-between gap-2 rounded-2xl border p-2 ${player.active ? "bg-white" : "bg-slate-50 opacity-60"}`}><button type="button" onClick={() => onOpen(player.id)} className="flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-xl p-2 text-left transition hover:bg-red-50"><span className="grid size-12 shrink-0 place-items-center rounded-xl bg-primary font-black text-primary-foreground">{player.jerseyNumber ? `#${player.jerseyNumber}` : "–"}</span><span className="min-w-0"><span className="block truncate font-semibold">{player.name}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">Foresatte: {guardians || "Ikke registrert"}</span><span className="mt-0.5 block text-xs text-muted-foreground">{completedMatches} kamper · Trykk for profil</span></span></button><Button className="shrink-0" size="sm" variant="ghost" onClick={() => void onToggle(player)}>{player.active ? "Deaktiver" : "Aktiver"}</Button></article>;
-    })}</div>}
-  </SectionCard>;
-}
-
-function StatsSection({ data }: { data: SeasonData }) {
-  type SortKey = "name" | "trainings" | "matches" | "starts" | "playingSeconds" | "goals" | "saves" | "twoMinutes" | "captain";
-  const [scope, setScope] = useState("all");
-  const [sortKey, setSortKey] = useState<SortKey>("matches");
-  const [descending, setDescending] = useState(true);
-  const completedTrainings = data.trainings.filter((training) => training.status === "completed");
-  const completedTrainingIds = new Set(data.trainings.filter((training) => training.status === "completed" && training.attendanceRecorded).map((training) => training.id));
-  const cupNames = [...new Set(data.matches.filter((match) => match.matchType === "cup").map((match) => match.cupName || match.competition).filter(Boolean))];
-  const completedMatches = data.matches.filter((match) => match.status === "completed" && (scope === "all" || scope === match.matchType || (scope.startsWith("cup:") && match.matchType === "cup" && (match.cupName || match.competition) === scope.slice(4))));
-  const completedMatchIds = new Set(completedMatches.map((match) => match.id));
-  const rows = data.players.filter((player) => Boolean(player.active)).map((player) => ({ player, trainings: data.attendance.filter((entry) => entry.playerId === player.id && completedTrainingIds.has(entry.trainingId)).length, matches: data.matchPlayers.filter((entry) => entry.playerId === player.id && completedMatchIds.has(entry.matchId)).length, starts: data.matchPlayers.filter((entry) => entry.playerId === player.id && Boolean(entry.starter) && completedMatchIds.has(entry.matchId)).length, goals: data.matchEvents.filter((event) => event.playerId === player.id && completedMatchIds.has(event.matchId) && !event.annulled && (event.type === "goal_open" || event.type === "goal_penalty")).length, twoMinutes: data.matchEvents.filter((event) => event.playerId === player.id && completedMatchIds.has(event.matchId) && !event.annulled && event.type === "two_min").length, saves: data.matchEvents.filter((event) => event.playerId === player.id && completedMatchIds.has(event.matchId) && !event.annulled && (event.type === "save_open" || event.type === "save_penalty")).length, captain: data.matchPlayers.filter((entry) => entry.playerId === player.id && Boolean(entry.captain) && completedMatchIds.has(entry.matchId)).length, playingSeconds: completedMatches.reduce((sum, match) => sum + playerSecondsForMatch(player.id, match, data.matchPlayers.filter((entry) => entry.matchId === match.id), data.matchSubstitutions.filter((entry) => entry.matchId === match.id)), 0) })).sort((a, b) => { const aValue = sortKey === "name" ? a.player.name : a[sortKey]; const bValue = sortKey === "name" ? b.player.name : b[sortKey]; const result = typeof aValue === "string" ? aValue.localeCompare(String(bValue), "nb-NO") : Number(aValue) - Number(bValue); return (descending ? -result : result) || a.player.name.localeCompare(b.player.name, "nb-NO"); });
-  function chooseSort(next: SortKey) { if (next === sortKey) setDescending((value) => !value); else { setSortKey(next); setDescending(next !== "name"); } }
-  const sortOptions: Array<{ value: SortKey; label: string }> = [{ value: "name", label: "Spiller" }, { value: "trainings", label: "Trening" }, { value: "matches", label: "Kamper" }, { value: "starts", label: "Starter" }, { value: "playingSeconds", label: "Spilletid" }, { value: "goals", label: "Mål" }, { value: "saves", label: "Redninger" }, { value: "twoMinutes", label: "2 min" }, { value: "captain", label: "Kaptein" }];
-  const SortHead = ({ value, label }: { value: SortKey; label: string }) => <TableHead className={value === "name" ? "" : "text-center"}><button type="button" onClick={() => chooseSort(value)} className={`inline-flex min-h-10 items-center gap-1 whitespace-nowrap font-bold ${sortKey === value ? "text-primary" : "text-slate-700"}`}>{label}{sortKey === value && (descending ? <ArrowDown className="size-3.5" /> : <ArrowUp className="size-3.5" />)}</button></TableHead>;
-  return <div className="space-y-5">
-    <SectionCard eyebrow="Automatisk oversikt" title="Sesongstatistikk" count={`${completedTrainings.length} gjennomførte treninger · ${completedMatches.length} valgte kamper`}><TrainingFocusSummary trainings={completedTrainings} /><div className="mt-5 grid gap-3 rounded-2xl border bg-white p-3 sm:grid-cols-2"><Field label="Vis statistikk for" htmlFor="stats-scope" className="!mt-0"><Select value={scope} onValueChange={setScope}><SelectTrigger id="stats-scope"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle kamper</SelectItem><SelectItem value="league">Serie</SelectItem><SelectItem value="cup">Alle cuper</SelectItem>{cupNames.map((cup) => <SelectItem key={cup} value={`cup:${cup}`}>{cup}</SelectItem>)}<SelectItem value="friendly">Vennskapskamper</SelectItem></SelectContent></Select></Field><div className="sm:hidden"><Field label="Sorter etter" htmlFor="stats-sort" className="!mt-0"><div className="flex gap-2"><Select value={sortKey} onValueChange={(value) => chooseSort(value as SortKey)}><SelectTrigger id="stats-sort"><SelectValue /></SelectTrigger><SelectContent>{sortOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select><Button aria-label={descending ? "Sorter stigende" : "Sorter synkende"} variant="outline" size="icon" onClick={() => setDescending((value) => !value)}>{descending ? <ArrowDown /> : <ArrowUp />}</Button></div></Field></div></div>{rows.length === 0 ? <EmptyState icon={BarChart3} title="Ingen statistikk ennå" text="Statistikken fylles når treninger og kamper markeres som gjennomført." /> : <div className="mt-3 overflow-x-auto rounded-2xl border bg-white"><Table><TableHeader><TableRow>{sortOptions.map((option) => <SortHead key={option.value} value={option.value} label={option.label} />)}</TableRow></TableHeader><TableBody>{rows.map((row) => <TableRow key={row.player.id}><TableCell className="whitespace-nowrap font-semibold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</TableCell><TableCell className="text-center">{row.trainings}</TableCell><TableCell className="text-center">{row.matches}</TableCell><TableCell className="text-center">{row.starts}</TableCell><TableCell className="whitespace-nowrap text-center">{formatSeasonPlayingTime(row.playingSeconds)}</TableCell><TableCell className="text-center">{row.goals}</TableCell><TableCell className="text-center">{row.saves}</TableCell><TableCell className="text-center">{row.twoMinutes}</TableCell><TableCell className="text-center">{row.captain}</TableCell></TableRow>)}</TableBody></Table></div>}<p className="mt-4 text-xs leading-5 text-muted-foreground">Bare aktiviteter som er markert som gjennomført inngår i statistikken. Trening viser hele sesongen.</p></SectionCard>
-    <PlayerUsageOverview data={data} matches={completedMatches} />
-    <SeriesStandings table={data.seriesTable} />
-  </div>;
-}
-
-function RecentPlayingTimeSummary({ data, matches }: { data: SeasonData; matches: Match[] }) {
-  const recentMatches = [...matches].sort((a, b) => `${b.date}T${b.startTime || "00:00"}`.localeCompare(`${a.date}T${a.startTime || "00:00"}`)).slice(0, 5).reverse();
-  const rows = data.players.filter((player) => Boolean(player.active)).map((player) => {
-    const cells = recentMatches.map((match) => {
-      const roster = data.matchPlayers.filter((entry) => entry.matchId === match.id);
-      const selected = roster.some((entry) => entry.playerId === player.id);
-      if (!selected) return { match, selected: false, seconds: 0, share: 0 };
-      const seconds = playerSecondsForMatch(player.id, match, roster, data.matchSubstitutions.filter((entry) => entry.matchId === match.id));
-      return { match, selected: true, seconds, share: currentMatchSeconds(match) ? seconds / currentMatchSeconds(match) : 0 };
-    });
-    const selectedCells = cells.filter((cell) => cell.selected);
-    const averageSeconds = selectedCells.length ? selectedCells.reduce((sum, cell) => sum + cell.seconds, 0) / selectedCells.length : 0;
-    const latestSelected = [...selectedCells].reverse().slice(0, 2);
-    const needsAttention = selectedCells.length === 0 || (latestSelected.length === 2 && latestSelected.every((cell) => cell.share < .4));
-    const chronologicalSelected = selectedCells;
-    const trendDifference = chronologicalSelected.length >= 2 ? chronologicalSelected[chronologicalSelected.length - 1].seconds - chronologicalSelected[0].seconds : 0;
-    const trend = trendDifference > 120 ? "Opp" : trendDifference < -120 ? "Ned" : "Stabil";
-    return { player, cells, selectedCount: selectedCells.length, averageSeconds, needsAttention, trend };
-  }).sort((a, b) => Number(b.needsAttention) - Number(a.needsAttention) || a.averageSeconds - b.averageSeconds || a.player.name.localeCompare(b.player.name, "nb-NO"));
-
-  return <SectionCard eyebrow="Kun for administratorer" title="Spilletid siste fem kamper" count={`${recentMatches.length} gjennomførte kamper i valgt filter`}>
-    <p className="text-sm text-muted-foreground">Laveste gjennomsnitt vises øverst. «Ikke med» regnes ikke som null minutter i gjennomsnittet.</p>
-    {recentMatches.length === 0 ? <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen gjennomførte kamper i dette utvalget.</p> : <div className="mt-4 overflow-x-auto rounded-2xl border bg-white"><Table className="min-w-[950px]"><TableHeader><TableRow><TableHead className="sticky left-0 z-10 min-w-56 bg-slate-50">Spiller</TableHead>{recentMatches.map((match) => <TableHead key={match.id} className="min-w-28 text-center"><span className="block font-bold">{new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "short" }).format(new Date(`${match.date}T12:00:00`))}</span><span className="block max-w-28 truncate text-[11px] font-normal text-muted-foreground">{match.opponent}</span></TableHead>)}<TableHead className="text-center">Snitt</TableHead><TableHead className="text-center">Utvikling</TableHead></TableRow></TableHeader><TableBody>{rows.map((row) => <TableRow key={row.player.id} className={row.needsAttention ? "bg-amber-50/50" : ""}><TableCell className="sticky left-0 z-[1] whitespace-nowrap bg-inherit font-semibold"><span>{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</span>{row.needsAttention && <Badge className="ml-2 bg-amber-100 text-amber-950">Bør vurderes</Badge>}</TableCell>{row.cells.map((cell) => <TableCell key={cell.match.id} className="text-center">{cell.selected ? <><span className="block whitespace-nowrap font-bold">{formatDetailedPlayingTime(cell.seconds)}</span><span className="text-xs text-muted-foreground">{Math.round(cell.share * 100)} %</span></> : <span className="text-xs text-muted-foreground">Ikke med</span>}</TableCell>)}<TableCell className="text-center font-black">{row.selectedCount ? formatDetailedPlayingTime(row.averageSeconds) : "–"}</TableCell><TableCell className={`text-center font-bold ${row.trend === "Opp" ? "text-emerald-700" : row.trend === "Ned" ? "text-amber-700" : "text-slate-600"}`}>{row.selectedCount > 1 ? row.trend : "–"}</TableCell></TableRow>)}</TableBody></Table></div>}
-    <p className="mt-4 text-xs leading-5 text-muted-foreground">«Bør vurderes» vises når spilleren ikke har vært tatt ut i utvalget, eller har spilt under 40 % i de to siste kampene hun var tatt ut til. Det er en påminnelse til trenerne, ikke en vurdering av spilleren.</p>
-  </SectionCard>;
-}
-
-function PlayerUsageOverview({ data, matches }: { data: SeasonData; matches: Match[] }) {
-  type OverviewSortKey = "name" | "attendance" | "playingShare" | "playingTime";
-  const positionColors: Record<PositionStat["position"], string> = { goalkeeper: "#7c3aed", left_wing: "#0284c7", left_back: "#0891b2", center: "#059669", right_back: "#d97706", right_wing: "#dc2626" };
-  const [sortKey, setSortKey] = useState<OverviewSortKey>("name");
-  const completedTrainings = data.trainings.filter((training) => training.status === "completed" && training.attendanceRecorded);
-  const completedTrainingIds = new Set(completedTrainings.map((training) => training.id));
-  const rows = data.players.filter((player) => Boolean(player.active)).map((player) => {
-    const totals = new Map<PositionStat["position"], { seconds: number; stints: number }>();
-    let selectedMatches = 0;
-    let availableSeconds = 0;
-    for (const match of matches) {
-      const roster = data.matchPlayers.filter((entry) => entry.matchId === match.id);
-      if (!roster.some((entry) => entry.playerId === player.id)) continue;
-      selectedMatches += 1;
-      availableSeconds += currentMatchSeconds(match);
-      const statistics = calculatePositionStatistics(roster, data.matchSubstitutions.filter((entry) => entry.matchId === match.id), currentMatchSeconds(match)).get(player.id);
-      for (const position of statistics?.positions ?? []) {
-        const current = totals.get(position.position) ?? { seconds: 0, stints: 0 };
-        totals.set(position.position, { seconds: current.seconds + position.seconds, stints: current.stints + position.stints });
-      }
-    }
-    const positions = [...totals.entries()].map(([position, value]) => ({ position, ...value })).sort((a, b) => b.seconds - a.seconds || positionLabels[a.position].localeCompare(positionLabels[b.position], "nb-NO"));
-    const totalSeconds = positions.reduce((sum, position) => sum + position.seconds, 0);
-    const attendedTrainings = data.attendance.filter((entry) => entry.playerId === player.id && completedTrainingIds.has(entry.trainingId)).length;
-    const attendanceRate = completedTrainings.length ? attendedTrainings / completedTrainings.length : 0;
-    const playingShare = availableSeconds ? totalSeconds / availableSeconds : 0;
-    return { player, positions, totalSeconds, selectedMatches, attendedTrainings, attendanceRate, playingShare, averageSeconds: selectedMatches ? totalSeconds / selectedMatches : 0 };
-  });
-  const sortedRows = [...rows].sort((a, b) => {
-    if (sortKey === "name") return a.player.name.localeCompare(b.player.name, "nb-NO");
-    const aValue = sortKey === "attendance" ? a.attendanceRate : sortKey === "playingShare" ? a.playingShare : a.totalSeconds;
-    const bValue = sortKey === "attendance" ? b.attendanceRate : sortKey === "playingShare" ? b.playingShare : b.totalSeconds;
-    return bValue - aValue || a.player.name.localeCompare(b.player.name, "nb-NO");
-  });
-  const positionRows = rows.filter((row) => row.positions.length > 0).sort((a, b) => a.player.name.localeCompare(b.player.name, "nb-NO"));
-  const percentage = (seconds: number, total: number) => total ? Math.round((seconds / total) * 100) : 0;
-  const averageAttendance = rows.length ? Math.round((rows.reduce((sum, row) => sum + row.attendanceRate, 0) / rows.length) * 100) : 0;
-  const playersWithMatches = rows.filter((row) => row.selectedMatches > 0);
-  const averagePlayingShare = playersWithMatches.length ? Math.round((playersWithMatches.reduce((sum, row) => sum + row.playingShare, 0) / playersWithMatches.length) * 100) : 0;
-
-  return <SectionCard eyebrow="Kun for administratorer" title="Spillerbruk og helhetsbilde" count={`${matches.length} kamper · ${completedTrainings.length} oppmøter registrert`}>
-    <div className="space-y-7">
-      <section>
-        <div className="mb-3"><h3 className="font-black">Posisjonsfordeling</h3><p className="mt-1 text-sm text-muted-foreground">Viser hvordan hver spillers registrerte spilletid er fordelt mellom posisjonene.</p></div>
-        {positionRows.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen registrerte posisjoner i de valgte kampene.</p> : <div className="grid gap-3 lg:grid-cols-2">{positionRows.map((row) => <article key={row.player.id} className="rounded-2xl border bg-white p-4"><div className="flex items-center justify-between gap-3"><p className="truncate font-bold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</p><span className="shrink-0 text-sm font-semibold">{formatDetailedPlayingTime(row.totalSeconds)}</span></div><div className="mt-3 flex h-4 overflow-hidden rounded-full bg-slate-100">{row.positions.map((position) => <span key={position.position} title={`${positionLabels[position.position]}: ${formatDetailedPlayingTime(position.seconds)} (${percentage(position.seconds, row.totalSeconds)} %)`} style={{ width: `${(position.seconds / row.totalSeconds) * 100}%`, backgroundColor: positionColors[position.position] }} />)}</div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">{row.positions.map((position) => <span key={position.position} className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ backgroundColor: positionColors[position.position] }} /><span>{positionLabels[position.position]} {percentage(position.seconds, row.totalSeconds)} %</span></span>)}</div></article>)}</div>}
-      </section>
-
-      <section>
-        <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h3 className="font-black">Treningsdeltakelse og spilletid</h3><p className="mt-1 text-sm text-muted-foreground">En direkte sammenligning per spiller. Spilletidsandelen gjelder bare kampene spilleren var tatt ut til.</p></div><div className="w-full sm:w-56"><Select value={sortKey} onValueChange={(value) => setSortKey(value as OverviewSortKey)}><SelectTrigger aria-label="Sorter oversikten"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">Sorter på navn</SelectItem><SelectItem value="attendance">Mest trening</SelectItem><SelectItem value="playingShare">Høyest spilleandel</SelectItem><SelectItem value="playingTime">Mest spilletid</SelectItem></SelectContent></Select></div></div>
-        {completedTrainings.length === 0 || matches.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Det trengs både gjennomførte treninger og kamper før helhetsbildet kan vises.</p> : <>
-          <div className="mb-3 grid grid-cols-2 gap-3"><div className="rounded-2xl border bg-red-50 p-4"><span className="block text-xs font-bold uppercase tracking-wider text-primary">Laget på trening</span><span className="mt-1 block text-2xl font-black">{averageAttendance} %</span><span className="text-xs text-muted-foreground">Gjennomsnittlig deltakelse</span></div><div className="rounded-2xl border bg-sky-50 p-4"><span className="block text-xs font-bold uppercase tracking-wider text-sky-800">Laget i kamp</span><span className="mt-1 block text-2xl font-black">{averagePlayingShare} %</span><span className="text-xs text-muted-foreground">Gjennomsnittlig spilleandel</span></div></div>
-          <div className="overflow-hidden rounded-2xl border bg-white">
-            <div className="border-b bg-slate-50 px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-bold">Sammenligning på samme skala</p>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold"><span className="inline-flex items-center gap-1.5"><span className="size-3 rounded-sm bg-primary" />Trening</span><span className="inline-flex items-center gap-1.5"><span className="size-3 rounded-sm bg-sky-600" />Spilletid</span></div>
-              </div>
-              <div className="mt-3 hidden grid-cols-[minmax(150px,1fr)_3fr] gap-4 text-[11px] text-muted-foreground sm:grid"><span>Spiller</span><div className="flex justify-between"><span>0 %</span><span>25 %</span><span>50 %</span><span>75 %</span><span>100 %</span></div></div>
-            </div>
-            <div className="divide-y">{sortedRows.map((row) => {
-              const attendancePercent = Math.round(row.attendanceRate * 100);
-              const playingPercent = Math.round(row.playingShare * 100);
-              return <article key={row.player.id} className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(150px,1fr)_3fr] sm:items-center sm:gap-4">
-                <div className="min-w-0"><div className="flex items-start justify-between gap-3 sm:block"><div><p className="truncate font-bold">{row.player.jerseyNumber ? `#${row.player.jerseyNumber} · ` : ""}{row.player.name}</p><p className="mt-0.5 text-xs text-muted-foreground">{row.attendedTrainings}/{completedTrainings.length} treninger · {row.selectedMatches} {row.selectedMatches === 1 ? "kamp" : "kamper"}</p></div><Badge className="shrink-0 sm:mt-2" variant="outline">{formatDetailedPlayingTime(row.totalSeconds)}</Badge></div></div>
-                <div className="relative space-y-2.5 before:absolute before:inset-y-0 before:left-1/4 before:border-l before:border-dashed before:border-slate-200 after:absolute after:inset-y-0 after:left-3/4 after:border-l after:border-dashed after:border-slate-200">
-                  <div className="absolute inset-y-0 left-1/2 border-l border-dashed border-slate-300" />
-                  <div className="relative z-10 grid grid-cols-[4.5rem_1fr_2.75rem] items-center gap-2 text-xs"><span className="font-semibold text-primary">Trening</span><div className="h-4 overflow-hidden rounded-full bg-red-100"><div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${attendancePercent}%` }} /></div><span className="text-right font-black">{attendancePercent}%</span></div>
-                  <div className="relative z-10 grid grid-cols-[4.5rem_1fr_2.75rem] items-center gap-2 text-xs"><span className="font-semibold text-sky-700">Spilletid</span><div className="h-4 overflow-hidden rounded-full bg-sky-100">{row.selectedMatches > 0 && <div className="h-full rounded-full bg-sky-600 transition-[width]" style={{ width: `${playingPercent}%` }} />}</div><span className="text-right font-black">{row.selectedMatches ? `${playingPercent}%` : "–"}</span></div>
-                  <p className="relative z-10 pl-[5.25rem] text-[11px] text-muted-foreground">{row.selectedMatches ? `${formatDetailedPlayingTime(row.averageSeconds)} i snitt per kamp` : "Ikke tatt ut i valgte kamper"}</p>
-                </div>
-              </article>;
-            })}</div>
-          </div>
-        </>}
-      </section>
-    </div>
-    <p className="mt-5 text-xs leading-5 text-muted-foreground">Dette er et trenerverktøy og ikke en rangering. Spilletidsandelen sammenligner bare kampene spilleren faktisk var tatt ut til. Datagrunnlaget avhenger av at startposisjoner, bytter og oppmøte er registrert.</p>
-  </SectionCard>;
-}
-
-function SeriesStandings({ table }: { table: SeriesTableData | null }) {
-  if (!table) return <SectionCard eyebrow="Kun for administratorer" title="Serietabell 2026/27" count="Automatisk oppdatering fra handball.no"><EmptyState icon={Trophy} title="Tabellen kunne ikke hentes" text="Den forrige publiserte tabellen vises igjen ved neste vellykkede oppdatering." /></SectionCard>;
-  return <SectionCard eyebrow="Kun for administratorer" title="Serietabell 2026/27" count={`${table.completedMatches} av ${table.totalMatches} kamper har resultat`}>
-    {table.completedMatches === 0 && <div className="mb-4 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950"><p className="font-bold">Sesongen har ikke startet ennå</p><p className="mt-1">Lagene vises i alfabetisk rekkefølge frem til de første resultatene er registrert.</p></div>}
-    <div className="overflow-x-auto rounded-2xl border bg-white">
-      <Table>
-        <TableHeader><TableRow><TableHead className="w-12 text-center">#</TableHead><TableHead>Lag</TableHead><TableHead className="text-center" title="Kamper">K</TableHead><TableHead className="text-center" title="Vunnet">V</TableHead><TableHead className="text-center" title="Uavgjort">U</TableHead><TableHead className="text-center" title="Tap">T</TableHead><TableHead className="text-center" title="Mål for">MF</TableHead><TableHead className="text-center" title="Mål mot">MM</TableHead><TableHead className="text-center" title="Målforskjell">+/−</TableHead><TableHead className="text-center">Poeng</TableHead></TableRow></TableHeader>
-        <TableBody>{table.standings.map((team) => <TableRow key={team.id ?? team.name} className={team.name.startsWith("Stokmarknes") ? "bg-red-50/70" : ""}><TableCell className="text-center font-bold">{team.position}</TableCell><TableCell className="whitespace-nowrap font-semibold">{team.name}</TableCell><TableCell className="text-center">{team.played}</TableCell><TableCell className="text-center">{team.won}</TableCell><TableCell className="text-center">{team.drawn}</TableCell><TableCell className="text-center">{team.lost}</TableCell><TableCell className="text-center">{team.goalsFor}</TableCell><TableCell className="text-center">{team.goalsAgainst}</TableCell><TableCell className="text-center">{team.goalDifference > 0 ? `+${team.goalDifference}` : team.goalDifference}</TableCell><TableCell className="text-center font-black">{team.points}</TableCell></TableRow>)}</TableBody>
-      </Table>
-    </div>
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><p>Beregnet fra publiserte resultater · Sist hentet {formatLoginDateTime(table.updatedAt)}</p><a className="font-semibold text-primary underline underline-offset-4" href={table.sourceUrl} target="_blank" rel="noreferrer">Se turneringen på handball.no</a></div>
-  </SectionCard>;
-}
-
-function TrainingFocusSummary({ trainings }: { trainings: Training[] }) {
-  const counts = trainingThemeOptions
-    .map((theme) => ({ theme, count: trainings.filter((training) => training.theme === theme).length }))
-    .filter((entry) => entry.count > 0)
-    .sort((a, b) => b.count - a.count || a.theme.localeCompare(b.theme, "nb-NO"));
-  const maxCount = Math.max(1, ...counts.map((entry) => entry.count));
-  return <section className="rounded-2xl border bg-red-50/40 p-4">
-    <div className="flex flex-wrap items-end justify-between gap-2"><div><h3 className="font-bold">Treningsfokus i sesongen</h3><p className="mt-1 text-sm text-muted-foreground">Hovedtema i treninger som er markert som gjennomført.</p></div><Badge variant="secondary">{counts.reduce((sum, entry) => sum + entry.count, 0)} med tema</Badge></div>
-    {counts.length ? <div className="mt-4 grid gap-3 sm:grid-cols-2">{counts.map((entry) => <div key={entry.theme}><div className="mb-1 flex items-center justify-between gap-3 text-sm"><span className="font-medium">{entry.theme}</span><span className="font-bold">{entry.count}</span></div><div className="h-2 overflow-hidden rounded-full bg-red-100"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(8, (entry.count / maxCount) * 100)}%` }} /></div></div>)}</div> : <p className="mt-4 rounded-xl border border-dashed bg-white/70 p-4 text-sm text-muted-foreground">Når gjennomførte treninger har et hovedtema, vises fordelingen her.</p>}
-  </section>;
-}
-
-function UserSection({ users, loginStats, cloudStorage, currentUserId, onAdd, onEdit, onDelete }: { users: AppUser[]; loginStats: UserLoginStat[]; cloudStorage: CloudStorageStatus; currentUserId: number; onAdd: () => void; onEdit: (user: AppUser) => void; onDelete: (id: number) => Promise<boolean> }) {
-  return <SectionCard eyebrow="Tilgang og roller" title="Brukere" count={`${users.filter((user) => Boolean(user.active)).length} aktive`} actionLabel="Legg til bruker" onAction={onAdd}>
-    <div className={`mb-4 rounded-2xl border p-4 text-sm ${cloudStorage.configured ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "border-slate-200 bg-slate-50 text-slate-700"}`}><div className="flex items-center justify-between gap-3"><div><p className="font-bold">Sikker innlogging med {cloudStorage.provider}</p><p className="mt-1 leading-6">{cloudStorage.configured ? "E-post og passord håndteres av Supabase. Roller og tilgang kontrolleres mot denne brukerlisten." : "Innloggingen er ikke konfigurert ennå."}</p></div><Badge className={cloudStorage.configured ? "bg-emerald-100 text-emerald-800" : ""} variant={cloudStorage.configured ? "secondary" : "outline"}>{cloudStorage.configured ? "Aktiv" : "Ikke klar"}</Badge></div></div>
+  return <article className="rounded-2xl border bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-primary">{match.competition}</p><p className="mt-1 text-sm font-medium text-muted-foreground">{formatDateWithWeekday(match.date)}</p><h3 className="mt-1 text-lg font-bold">{fixtureLabel(match)}</h3></div><div className="flex flex-col items-end gap-2"><StatusBadge status={match.status} />{match.ourScore !== null && match.opponentScore !== null && <span className="rounded-xl bg-primary px-3 py-2 text-lg font-bold text-primary-foreground">{displayScore(match)}</span>}</div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground"><span className="flex items-center gap-1"><Clock3 className="size-4" /> {match.startTime || "Tid ikke satt"}</span…8012 tokens truncated…e klar"}</Badge></div></div>
     <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-bold">Forhåndsgodkjent innlogging</p><p className="mt-1 leading-6">Legg inn navn og e-postadresse før brukeren får tilgang. Telefonnummer kan registreres som kontaktinformasjon. Nye brukere velger «Første gang? Opprett passord» på innloggingssiden. Innlogginger telles fra 7. september 2026.</p></div>
     <div className="grid gap-3 lg:grid-cols-2">{users.map((user) => { const activity = loginStats.find((item) => item.userId === user.id); const hasAccount = Boolean(user.accountUserId); return <article key={user.id} className={`rounded-2xl border p-4 ${user.active ? "bg-white" : "bg-slate-50 opacity-70"}`}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-bold">{user.name}</h3><Badge variant={user.role === "admin" ? "default" : "secondary"}>{roleLabel(user.role)}</Badge>{user.id === currentUserId && <Badge variant="outline">Deg</Badge>}</div>{user.email && <p className="mt-2 break-all text-sm text-muted-foreground">{user.email}</p>}{user.phone && <p className={`${user.email ? "mt-1" : "mt-2"} text-sm text-muted-foreground`}>{user.phone}</p>}{!user.email && !user.phone && <p className="mt-2 text-sm text-red-700">Innloggingsinformasjon mangler</p>}<div className="mt-3 flex flex-wrap gap-2"><Badge className={hasAccount ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"} variant="secondary">{hasAccount ? "Konto opprettet" : "Konto ikke opprettet"}</Badge>{hasAccount && <Badge variant="outline">{Number(activity?.loginCount ?? 0)} innlogginger</Badge>}</div>{hasAccount && <p className="mt-2 text-xs text-muted-foreground">{activity?.lastLoginAt ? `Sist innlogget ${formatLoginDateTime(activity.lastLoginAt)}` : "Ingen innlogging registrert ennå"}</p>}</div><StatusBadge status={user.active ? "completed" : "cancelled"} label={user.active ? "Aktiv" : "Deaktivert"} /></div><div className="mt-4 flex gap-2"><Button size="sm" variant="outline" onClick={() => onEdit(user)}><Pencil /> Rediger</Button>{user.id !== currentUserId && <DeleteButton label="Slett bruker" description="Brukeren mister all tilgang og eventuelle kampoppdrag." onConfirm={() => void onDelete(user.id)} />}</div></article>; })}</div>
   </SectionCard>;
@@ -1016,7 +883,7 @@ function PlayerProfileDialog({ player, data, open, onOpenChange }: { player: Pla
   });
   const recentForm = matchRows.slice(0, 5).reverse();
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[94dvh] overflow-y-auto p-0 sm:max-w-5xl"><DialogHeader className="sr-only"><DialogTitle>{player.name}</DialogTitle><DialogDescription>Spillerprofil med sesongdata.</DialogDescription></DialogHeader>
-    <div className="overflow-hidden rounded-t-lg bg-gradient-to-r from-[#a3131a] via-[#d1262f] to-[#f59e0b] p-5 text-white sm:p-7"><div className="flex items-center gap-4"><span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-white/95 text-2xl font-black text-primary shadow-lg">{player.jerseyNumber ? `#${player.jerseyNumber}` : "–"}</span><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.2em] text-red-100">{primaryPosition ? positionLabels[primaryPosition.position] : "Spiller"}</p><h2 className="truncate text-2xl font-black sm:text-3xl">{player.name}</h2><p className="mt-1 text-sm text-white/85">STHK 2015 · {player.active ? "Aktiv spiller" : "Inaktiv spiller"}</p></div></div></div>
+    <div className="overflow-hidden rounded-t-lg bg-gradient-to-r from-[#a3131a] via-[#d1262f] to-[#f59e0b] p-5 text-white sm:p-7"><div className="flex items-center gap-4"><span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-white/95 text-2xl font-black text-primary shadow-lg">{player.jerseyNumber ? `#${player.jerseyNumber}` : "–"}</span><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.2em] text-red-100">{primaryPosition ? positionLabels[primaryPosition.position] : "Spiller"}</p><h2 className="truncate text-2xl font-black sm:text-3xl">{player.name}</h2><p className="mt-1 text-sm text-white/85">{data.currentUser?.teamName ?? "STHK 2015"} · {player.active ? "Aktiv spiller" : "Inaktiv spiller"}</p></div></div></div>
     <div className="space-y-5 p-4 sm:p-6">
       <div className="grid grid-cols-3 gap-px overflow-hidden rounded-2xl border bg-slate-200 sm:grid-cols-6"><FplProfileStat label="Kamper" value={completedHistory.length} /><FplProfileStat label="Starter" value={completedHistory.filter(({ entry }) => Boolean(entry.starter)).length} /><FplProfileStat label="Minutter" value={Math.floor(totalSeconds / 60)} /><FplProfileStat label="Mål" value={totalGoals} /><FplProfileStat label="Redninger" value={totalSaves} /><FplProfileStat label="Trening" value={`${trainingRate}%`} /></div>
       <div className="grid gap-4 lg:grid-cols-2"><section className="rounded-2xl border bg-white p-4"><div className="flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-primary">Siste kamper</p><h3 className="mt-1 font-black">Form uten poeng</h3></div><span className="text-xs text-muted-foreground">Tid · mål/redninger</span></div>{recentForm.length ? <div className="mt-4 grid grid-cols-5 gap-1.5">{recentForm.map((row) => <div key={row.match.id} className="min-w-0 rounded-xl bg-slate-50 p-2 text-center"><p className="truncate text-[10px] font-bold text-muted-foreground">{shortPlayerName(row.match.opponent)}</p><p className="mt-1 text-sm font-black">{Math.floor(row.seconds / 60)}m</p><p className="text-[10px] text-muted-foreground">{row.goals}M{row.saves ? ` · ${row.saves}R` : ""}</p></div>)}</div> : <p className="mt-4 text-sm text-muted-foreground">Ingen gjennomførte kamper ennå.</p>}</section><section className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold uppercase tracking-wider text-primary">Neste kamper</p><h3 className="mt-1 font-black">Kampprogram</h3>{upcomingHistory.length ? <div className="mt-3 flex gap-2 overflow-x-auto pb-1">{upcomingHistory.slice(0, 5).map(({ entry, match }) => <div key={match.id} className="min-w-32 rounded-xl bg-red-50 p-3"><p className="text-[10px] font-bold uppercase text-primary">{formatDate(match.date)}</p><p className="mt-1 truncate text-sm font-black">{match.opponent}</p><p className="mt-1 text-xs text-muted-foreground">{match.startTime || "Tid ikke satt"} · {entry.starter ? "Start" : "Benk"}</p></div>)}</div> : <p className="mt-4 text-sm text-muted-foreground">Ingen planlagte kamper i laguttaket.</p>}</section></div>
