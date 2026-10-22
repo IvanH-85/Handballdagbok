@@ -207,8 +207,21 @@ begin
   if exists(select 1 from public.team_memberships where user_id=old.id) then return null; end if;
   return old;
 end $$;
+create or replace function public.guard_app_user_team_update()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if not exists (
+    select 1 from public.team_memberships
+    where user_id=old.id and team_slug=public.current_team_slug()
+  ) then
+    raise exception 'Du har ikke tilgang til denne brukeren i valgt lag.' using errcode='42501';
+  end if;
+  return new;
+end $$;
 drop trigger if exists app_users_team_membership on public.app_users;
 drop trigger if exists app_users_delete_team_membership on public.app_users;
+drop trigger if exists app_users_team_update_guard on public.app_users;
+create trigger app_users_team_update_guard before update on public.app_users for each row execute function public.guard_app_user_team_update();
 create trigger app_users_team_membership after insert or update of role,active on public.app_users for each row execute function public.ensure_user_team_membership();
 create trigger app_users_delete_team_membership before delete on public.app_users for each row execute function public.delete_user_from_current_team();
 
@@ -305,6 +318,7 @@ revoke all on function public.current_team_slug() from public,anon,authenticated
 revoke all on function public.guard_team_data() from public,anon,authenticated;
 revoke all on function public.ensure_user_team_membership() from public,anon,authenticated;
 revoke all on function public.delete_user_from_current_team() from public,anon,authenticated;
+revoke all on function public.guard_app_user_team_update() from public,anon,authenticated;
 grant execute on function public.claim_app_user() to authenticated;
 grant execute on function public.season_snapshot() to authenticated;
 grant execute on function public.cup_snapshot() to authenticated;
