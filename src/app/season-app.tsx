@@ -409,6 +409,16 @@ export function SeasonApp() {
     if (token) await supabaseSignOut(token).catch(() => null);
   }
 
+  const teamTitle = data.currentUser?.teamName ?? "STHK 2015";
+
+  useEffect(() => {
+    document.title = `${teamTitle} · Sesongdagbok`;
+    const applicationName = document.querySelector<HTMLMetaElement>('meta[name="application-name"]');
+    const appleTitle = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
+    if (applicationName) applicationName.content = teamTitle;
+    if (appleTitle) appleTitle.content = teamTitle;
+  }, [teamTitle]);
+
   if (!authReady) return <AuthLoading />;
   if (!authSession) return <LoginScreen onAuthenticated={handleAuthenticated} />;
 
@@ -424,13 +434,7 @@ export function SeasonApp() {
   const availableTeams = data.currentUser?.availableTeams ?? [];
   const teamTitle = data.currentUser?.teamName ?? "STHK 2015";
 
-  useEffect(() => {
-    document.title = `${teamTitle} · Sesongdagbok`;
-    const applicationName = document.querySelector<HTMLMetaElement>('meta[name="application-name"]');
-    const appleTitle = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
-    if (applicationName) applicationName.content = teamTitle;
-    if (appleTitle) appleTitle.content = teamTitle;
-  }, [teamTitle]);
+
 
   return (
     <main className="min-h-screen pb-16">
