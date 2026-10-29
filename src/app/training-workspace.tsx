@@ -106,6 +106,7 @@ export function TrainingWorkspace({ data, loading, saving, runAction }: { data: 
   const [exerciseOpen, setExerciseOpen] = useState(false);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
   const [focusTraining, setFocusTraining] = useState<Training | null>(null);
+  const [runTraining, setRunTraining] = useState<Training | null>(null);
   const completedCount = data.trainings.filter((training) => training.status === "completed").length;
   const plannedCount = data.trainings.filter((training) => training.status === "planned").length;
 
@@ -176,6 +177,15 @@ export function TrainingWorkspace({ data, loading, saving, runAction }: { data: 
           if (ok) setExerciseOpen(false);
         }}
       />
+      <TrainingRunDialog
+        key={runTraining?.id ?? "training-run"}
+        training={runTraining}
+        data={data}
+        saving={saving}
+        onOpenChange={(open) => { if (!open) setRunTraining(null); }}
+        onSave={(payload) => runAction({ action: "saveTraining", ...payload }, "Oppmøte og øvelseskommentarer er lagret.")}
+        onFinish={(training) => runAction({ action: "setTrainingStatus", id: training.id, status: "completed" }, "Treningen er avsluttet.").then((ok) => { if (ok) setRunTraining(null); return ok; })}
+      />
       <TrainingFocusDialog
         key={focusTraining?.id ?? "training-focus"}
         open={Boolean(focusTraining)}
@@ -194,7 +204,7 @@ function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStat
   if (!data.trainings.length) return <EmptyTraining onAdd={onAdd} />;
   const currentMonth = monthKey(new Date());
   const monthGroups = groupTrainingsByMonth(data.trainings);
-  const cardActions = { data, onEdit, onFocus, onDelete, onStatus };
+  const cardActions = { data, onEdit, onFocus, onDelete, onStatus, onRun: (training: Training) => setRunTraining(training) };
 
   return <div className="space-y-4">
     <Accordion key={monthGroups[0]?.key ?? "no-training-months"} type="multiple" defaultValue={monthGroups[0] ? [monthGroups[0].key] : []} className="space-y-3">
@@ -233,7 +243,7 @@ function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStat
   </div>;
 }
 
-function TrainingCard({ training, data, onEdit, onFocus, onDelete, onStatus }: { training: Training; data: TrainingData; onEdit: (training: Training) => void; onFocus: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean> }) {
+function TrainingCard({ training, data, onEdit, onFocus, onDelete, onStatus, onRun }: { training: Training; data: TrainingData; onEdit: (training: Training) => void; onFocus: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean>; onRun: (training: Training) => void }) {
   const [expanded, setExpanded] = useState(training.status !== "completed");
   useEffect(() => {
     setExpanded(training.status !== "completed");
@@ -258,9 +268,74 @@ function TrainingCard({ training, data, onEdit, onFocus, onDelete, onStatus }: {
           return <div key={section} className="grid grid-cols-[30px_1fr] gap-2"><span className={`grid size-7 place-items-center rounded-lg text-xs font-bold ${meta.color}`}>{meta.short}</span><div><p className="text-xs font-bold">{meta.label}</p>{sectionItems.length ? <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{sectionItems.map((item) => data.exercises.find((exercise) => exercise.id === item.exerciseId)?.title).filter(Boolean).join(" · ")}</p> : <p className="mt-0.5 text-xs text-slate-400">Ingen øvelser lagt til</p>}</div></div>;
         })}
       </div>
-      <div className="flex flex-wrap gap-2 border-t p-3"><Button className="min-h-11 flex-1" variant="outline" onClick={() => onEdit(training)}><Pencil /> {training.status === "planned" ? "Åpne planen" : "Se trening"}</Button>{training.status !== "cancelled" && <Button className="min-h-11 flex-1 bg-amber-400 text-amber-950 hover:bg-amber-500" onClick={() => onFocus(training)}><Sparkles /> Treningsblikk</Button>}{training.status === "planned" ? <><Button className="min-h-11" onClick={() => void onStatus(training.id, "completed")}><CheckCircle2 /> Gjennomført</Button><Button className="min-h-11" variant="ghost" onClick={() => void onStatus(training.id, "cancelled")}>Avlys</Button><DeleteButton label="Slett trening" description="Treningen, øvelsesplanen og oppmøtet blir slettet." onConfirm={() => void onDelete(training.id)} /></> : <Button className="min-h-11" variant="outline" onClick={() => void onStatus(training.id, "planned")}>Åpne igjen</Button>}</div>
+      <div className="flex flex-wrap gap-2 border-t p-3"><Button className="min-h-11 flex-1" variant="outline" onClick={() => onEdit(training)}><Pencil /> {training.status === "planned" ? "Åpne planen" : "Se trening"}</Button>{training.status !== "cancelled" && <Button className="min-h-11 flex-1 bg-amber-400 text-amber-950 hover:bg-amber-500" onClick={() => onFocus(training)}><Sparkles /> Treningsblikk</Button>}{training.status === "planned" ? <><Button className="min-h-11 flex-1 bg-primary text-primary-foreground" onClick={() => onRun(training)}><Dumbbell /> Start gjennomføring</Button><Button className="min-h-11" onClick={() => void onStatus(training.id, "completed")}><CheckCircle2 /> Gjennomført</Button><Button className="min-h-11" variant="ghost" onClick={() => void onStatus(training.id, "cancelled")}>Avlys</Button><DeleteButton label="Slett trening" description="Treningen, øvelsesplanen og oppmøtet blir slettet." onConfirm={() => void onDelete(training.id)} /></> : <Button className="min-h-11" variant="outline" onClick={() => void onStatus(training.id, "planned")}>Åpne igjen</Button>}</div>
       </div>
     </article>;
+}
+
+function TrainingRunDialog({ training, data, saving, onOpenChange, onSave, onFinish }: { training: Training | null; data: TrainingData; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (payload: Record<string, unknown>) => Promise<boolean>; onFinish: (training: Training) => Promise<boolean> }) {
+  const [playerIds, setPlayerIds] = useState<number[]>([]);
+  const [attendanceRecorded, setAttendanceRecorded] = useState(false);
+  const [comments, setComments] = useState<Record<number, string>>({});
+  const [doneIds, setDoneIds] = useState<number[]>([]);
+  useEffect(() => {
+    if (!training) return;
+    setPlayerIds(data.attendance.filter((entry) => entry.trainingId === training.id).map((entry) => entry.playerId));
+    setAttendanceRecorded(training.attendanceRecorded);
+    setComments(Object.fromEntries(data.trainingExercises.filter((entry) => entry.trainingId === training.id).map((entry) => [entry.id, entry.notes ?? ""])));
+    setDoneIds([]);
+  }, [training?.id, data]);
+  if (!training) return null;
+  const players = data.players.filter((player) => Boolean(player.active)).sort((a,b) => a.name.localeCompare(b.name, "nb-NO"));
+  const items = data.trainingExercises.filter((entry) => entry.trainingId === training.id).sort((a,b) => sections.indexOf(a.section)-sections.indexOf(b.section) || a.sortOrder-b.sortOrder);
+  const payload = {
+    id: training.id, date: training.date, startTime: training.startTime, durationMinutes: training.durationMinutes,
+    title: training.title, theme: training.theme, plan: training.plan, notes: training.notes,
+    attendanceRecorded, playerIds,
+    exerciseItems: items.map((item) => ({ exerciseId: item.exerciseId, section: item.section, sortOrder: item.sortOrder, durationMinutes: item.durationMinutes, notes: comments[item.id] ?? item.notes ?? "" })),
+  };
+  return <Dialog open={Boolean(training)} onOpenChange={onOpenChange}>
+    <DialogContent className="flex h-[96dvh] max-h-[96dvh] w-[calc(100%-1rem)] max-w-2xl flex-col overflow-hidden p-0">
+      <DialogHeader className="shrink-0 border-b px-4 py-4 sm:px-6">
+        <DialogTitle className="text-xl">Gjennomføring · {training.title}</DialogTitle>
+        <DialogDescription>{formatDate(training.date)} · {training.startTime || "Tid ikke satt"} · {training.durationMinutes} min</DialogDescription>
+      </DialogHeader>
+      <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-6">
+        <section className="rounded-2xl border bg-slate-50 p-3">
+          <div className="flex items-center justify-between"><h3 className="font-bold">Oppmøte</h3><Badge variant="secondary">{playerIds.length} møtt</Badge></div>
+          <label className="mt-2 flex min-h-11 items-center gap-2 text-sm"><Checkbox checked={attendanceRecorded} onCheckedChange={(v) => setAttendanceRecorded(v===true)} /> Oppmøte er registrert</label>
+          <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {players.map((player) => <label key={player.id} className="flex min-h-11 items-center gap-3 rounded-xl bg-white px-3 text-sm"><Checkbox checked={playerIds.includes(player.id)} onCheckedChange={(v) => setPlayerIds((ids) => v===true ? [...ids,player.id] : ids.filter((id) => id!==player.id))} />{player.name}</label>)}
+          </div>
+        </section>
+        <section className="space-y-3">
+          <h3 className="font-bold">Planlagte øvelser</h3>
+          {!items.length && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ingen øvelser er lagt til i planen.</p>}
+          {items.map((item,index) => {
+            const exercise = data.exercises.find((entry) => entry.id===item.exerciseId);
+            if (!exercise) return null;
+            const done=doneIds.includes(item.id);
+            return <article key={item.id} className={`rounded-2xl border p-3 ${done?"border-emerald-300 bg-emerald-50/50":"bg-white"}`}>
+              <div className="flex items-start gap-3">
+                <button type="button" aria-label={done?"Marker som ikke ferdig":"Marker øvelse ferdig"} onClick={() => setDoneIds((ids) => done?ids.filter((id)=>id!==item.id):[...ids,item.id])} className="mt-1 grid size-11 shrink-0 place-items-center rounded-xl border bg-white text-primary">{done?<CheckCircle2 className="size-6"/>:<span className="font-bold">{index+1}</span>}</button>
+                <div className="min-w-0 flex-1"><h4 className="font-bold">{exercise.title}</h4><p className="text-xs text-muted-foreground">{sectionMeta[item.section].label} · {item.durationMinutes} min</p></div>
+              </div>
+              {exercise.description && <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{exercise.description}</p>}
+              {exercise.equipment && <p className="mt-2 text-xs text-muted-foreground">Utstyr: {exercise.equipment}</p>}
+              {exercise.sourceUrl && <a className="mt-3 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground" href={exercise.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink className="size-4"/>Åpne øvelseslenke</a>}
+              <label className="mt-3 block text-sm font-semibold" htmlFor={`run-note-${item.id}`}>Kommentar til øvelsen</label>
+              <Textarea id={`run-note-${item.id}`} className="mt-1 min-h-20 text-base" value={comments[item.id]??""} onChange={(e)=>setComments((old)=>({...old,[item.id]:e.target.value}))} placeholder="Noter kort hva dere gjorde eller vil huske til neste gang" />
+            </article>;
+          })}
+        </section>
+        {training.plan && <section className="rounded-2xl border p-3"><h3 className="font-bold">Dagens fokus</h3><p className="mt-1 whitespace-pre-wrap text-sm">{training.plan}</p></section>}
+      </div>
+      <div className="grid shrink-0 gap-2 border-t bg-white p-3 sm:grid-cols-2 sm:p-4">
+        <Button className="min-h-12" variant="outline" disabled={saving} onClick={() => void onSave(payload)}>{saving?"Lagrer …":"Lagre oppmøte og kommentarer"}</Button>
+        <Button className="min-h-12" disabled={saving} onClick={async()=>{const ok=await onSave(payload); if(ok) await onFinish(training);}}>{saving?"Lagrer …":"Avslutt trening"}</Button>
+      </div>
+    </DialogContent>
+  </Dialog>;
 }
 
 function TrainingFocusDialog({ open, training, data, saving, onOpenChange, onSave }: { open: boolean; training: Training | null; data: TrainingData; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (payload: Record<string, unknown>) => Promise<boolean> }) {
