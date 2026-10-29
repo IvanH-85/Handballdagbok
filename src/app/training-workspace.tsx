@@ -147,7 +147,7 @@ export function TrainingWorkspace({ data, loading, saving, runAction }: { data: 
           <TabsTrigger value="library" className="rounded-lg">Øvelsesbank · {data.exercises.length}</TabsTrigger>
         </TabsList>
         <TabsContent value="plans">
-          <TrainingPlans data={data} loading={loading} onAdd={newTraining} onEdit={editTraining} onFocus={setFocusTraining} onDelete={(id) => runAction({ action: "deleteTraining", id }, "Treningen er slettet.")} onStatus={(id, status) => runAction({ action: "setTrainingStatus", id, status }, status === "completed" ? "Treningen er markert som gjennomført og låst." : status === "cancelled" ? "Treningen er markert som avlyst." : "Treningen er åpnet igjen.")} />
+          <TrainingPlans data={data} loading={loading} onAdd={newTraining} onEdit={editTraining} onFocus={setFocusTraining} onRun={(training) => setRunTraining(training)} onDelete={(id) => runAction({ action: "deleteTraining", id }, "Treningen er slettet.")} onStatus={(id, status) => runAction({ action: "setTrainingStatus", id, status }, status === "completed" ? "Treningen er markert som gjennomført og låst." : status === "cancelled" ? "Treningen er markert som avlyst." : "Treningen er åpnet igjen.")} />
         </TabsContent>
         <TabsContent value="library">
           <ExerciseLibrary exercises={data.exercises} loading={loading} onAdd={newExercise} onEdit={editExercise} onDelete={(id) => runAction({ action: "deleteExercise", id }, "Øvelsen er slettet.")} />
@@ -199,12 +199,12 @@ export function TrainingWorkspace({ data, loading, saving, runAction }: { data: 
   );
 }
 
-function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStatus }: { data: TrainingData; loading: boolean; onAdd: () => void; onEdit: (training: Training) => void; onFocus: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean> }) {
+function TrainingPlans({ data, loading, onAdd, onEdit, onFocus, onDelete, onStatus, onRun }: { data: TrainingData; loading: boolean; onAdd: () => void; onEdit: (training: Training) => void; onFocus: (training: Training) => void; onDelete: (id: number) => Promise<boolean>; onStatus: (id: number, status: TrainingStatus) => Promise<boolean>; onRun: (training: Training) => void }) {
   if (loading) return <LoadingCards />;
   if (!data.trainings.length) return <EmptyTraining onAdd={onAdd} />;
   const currentMonth = monthKey(new Date());
   const monthGroups = groupTrainingsByMonth(data.trainings);
-  const cardActions = { data, onEdit, onFocus, onDelete, onStatus, onRun: (training: Training) => setRunTraining(training) };
+  const cardActions = { data, onEdit, onFocus, onDelete, onStatus, onRun };
 
   return <div className="space-y-4">
     <Accordion key={monthGroups[0]?.key ?? "no-training-months"} type="multiple" defaultValue={monthGroups[0] ? [monthGroups[0].key] : []} className="space-y-3">
