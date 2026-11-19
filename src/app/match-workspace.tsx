@@ -285,8 +285,8 @@ export function MatchWorkspace({
   const phaseLabel = phase === "halftime" ? (singlePeriodMatch ? "1. omgang ferdig" : "Pause") : phase === "second_half" ? "2. omgang" : phase === "first_half" ? "1. omgang" : phase === "completed" ? "Kampen er ferdig" : "Ikke startet";
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="h-[96dvh] max-h-[96dvh] overflow-y-auto p-4 sm:max-w-5xl sm:p-6">
-      <DialogHeader>
+    <DialogContent className="h-[96dvh] max-h-[96dvh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] min-w-0 overflow-x-hidden overflow-y-auto p-3 sm:w-full sm:max-w-5xl sm:p-6">
+      <DialogHeader className="min-w-0">
         <DialogTitle>{fixtureLabel(match)}</DialogTitle>
         <DialogDescription>{match.competition} · {formatDate(match.date)}{match.startTime ? ` kl. ${match.startTime}` : ""}</DialogDescription>
         <div className="mt-1 flex w-fit items-center gap-2 rounded-full border bg-slate-50 px-3 py-1.5 text-sm text-slate-800">
@@ -295,12 +295,12 @@ export function MatchWorkspace({
         </div>
       </DialogHeader>
 
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         {!canRecord && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950"><p className="font-bold">{match.status === "cancelled" ? "Kampen er avlyst" : match.status === "completed" ? "Kampen er gjennomført og låst" : "Visning av kamp og laguttak"}</p><p className="mt-1">{match.status === "completed" ? "En administrator kan åpne kampen igjen dersom noe må korrigeres." : "Du har lesetilgang til kampen."}</p></div>}
-        <section className="rounded-3xl bg-gradient-to-br from-[#730d13] to-[#b72224] px-4 py-4 text-white shadow-sm sm:px-6">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-center">
+        <section className="min-w-0 rounded-3xl bg-gradient-to-br from-[#730d13] to-[#b72224] px-3 py-3 text-white shadow-sm sm:px-6 sm:py-4">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-center sm:gap-3">
             <div><p className="text-sm font-bold leading-tight sm:text-lg">{homeTeam}</p><p className="mt-1 text-5xl font-black tabular-nums">{homeScore}</p></div>
-            <div className="min-w-24">
+            <div className="min-w-0 sm:min-w-24">
               <p className="text-xs font-bold uppercase tracking-wider text-red-100">{phaseLabel}</p>
               <p className="mt-1 font-mono text-2xl font-black tabular-nums sm:text-3xl">{formatClock(displayedPeriodSeconds)}</p>
               <p className="mt-1 text-xs text-red-100">{clockIsRunning ? "Klokken går" : phase === "halftime" ? (singlePeriodMatch ? "Klar til å avslutte kampen" : "Klar for andre omgang") : phase === "first_half" || phase === "second_half" ? "Klokken er pauset" : `${match.periodCount || 2} × ${match.periodMinutes || 20} min`}</p>
@@ -343,7 +343,7 @@ export function MatchWorkspace({
 
         {!match.internalMatch && <section>
           <div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="text-lg font-bold">Kampbane</h3><p className="text-sm text-muted-foreground">Trykk på en spiller eller motstanderlaget for å registrere.</p></div><Badge variant="outline"><Users /> {roster.length} spillere</Badge></div>
-          <div className="relative mx-auto aspect-[4/5] w-full max-w-3xl overflow-hidden rounded-3xl border-4 border-white bg-[#efa764] shadow-[0_0_0_1px_#d7833e] sm:aspect-[16/10]">
+          <div className="relative mx-auto aspect-[4/5] w-full min-w-0 max-w-3xl overflow-hidden rounded-3xl border-4 border-white bg-[#efa764] shadow-[0_0_0_1px_#d7833e] sm:aspect-[16/10]">
             <div className="absolute inset-x-0 top-1/2 border-t-2 border-white/90" />
             <div className="absolute left-1/2 top-1/2 size-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/90 sm:size-32" />
             <div className="absolute left-1/2 top-0 h-[9%] w-[30%] -translate-x-1/2 border-x-2 border-b-2 border-white/90" />
@@ -364,7 +364,7 @@ export function MatchWorkspace({
             })}
           </div>
 
-          <div className="mt-3 rounded-2xl border bg-slate-50 p-3">
+          <div className="mt-3 min-w-0 rounded-2xl border bg-slate-50 p-3">
             <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Benk</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {roster.filter((entry) => (currentPositions.get(entry.playerId) ?? "bench") === "bench").map((entry) => {
@@ -489,7 +489,7 @@ function MatchTeamView({ side, courtLabel, teamName, roster, players, events, cu
   const shortNames = compactName;
   return <section className="rounded-2xl border p-3 sm:p-4">
     <div className="mb-3 flex items-center justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{courtLabel}</p><h3 className="text-lg font-bold">{teamName}</h3></div><Badge variant="outline"><Users /> {roster.length} spillere</Badge></div>
-    <div className="relative mx-auto aspect-[4/5] w-full max-w-3xl overflow-hidden rounded-3xl border-4 border-white bg-[#efa764] shadow-[0_0_0_1px_#d7833e] sm:aspect-[16/10]">
+    <div className="relative mx-auto aspect-[4/5] w-full min-w-0 max-w-3xl overflow-hidden rounded-3xl border-4 border-white bg-[#efa764] shadow-[0_0_0_1px_#d7833e] sm:aspect-[16/10]">
       <div className="absolute inset-x-0 top-1/2 border-t-2 border-white/90" /><div className="absolute left-1/2 top-1/2 size-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/90 sm:size-32" />
       <div className="absolute left-1/2 top-0 h-[9%] w-[30%] -translate-x-1/2 border-x-2 border-b-2 border-white/90" /><div className="absolute bottom-0 left-1/2 h-[9%] w-[30%] -translate-x-1/2 border-x-2 border-t-2 border-white/90" />
       <div className="absolute left-1/2 top-0 h-[27%] w-[62%] -translate-x-1/2 rounded-b-[50%] border-x-2 border-b-2 border-white/80" /><div className="absolute bottom-0 left-1/2 h-[27%] w-[62%] -translate-x-1/2 rounded-t-[50%] border-x-2 border-t-2 border-white/80" />
@@ -572,7 +572,7 @@ function InternalMatchView({ away, home }: { away: InternalTeamViewProps; home: 
     {bench(team)}
   </div>;
 
-  return <section className="rounded-2xl border p-2.5 sm:p-3">
+  return <section className="min-w-0 rounded-2xl border p-2.5 sm:p-3">
     {teamStrip(away)}
     <div className="relative mx-auto my-2 aspect-[16/10] w-full overflow-hidden rounded-2xl border-4 border-white bg-[#efa764] shadow-[0_0_0_1px_#d7833e] sm:my-3">
       <div className="absolute inset-x-0 top-1/2 border-t-2 border-white/90" />
